@@ -1,0 +1,215 @@
+{
+	"_id" : ObjectId("53b25ca258e7abca7a8b4568"),
+	"time" : ISODate("2014-07-01T07:00:50.996Z"),
+	"type" : "update",
+	"object_id" : ObjectId("536ce939f789b8475e8b4d45"),
+	"data" : {
+		"budget" : {
+			"daily" : 10000,
+			"lifetime" : NumberLong(0),
+			"type" : "daily"
+		}
+	},
+	"context" : {
+		"origin" : "request",
+		"method" : "PUT",
+		"url" : "/api/campaigns/536ce939f789b8475e8b4d39",
+		"user_id" : ObjectId("53709736f789b8d60f8b4997")
+	}
+}
+
+db.adgroups_changelog.findOne({"data.budget": {$exists: true}, "time": {$gte: ISODate("2016-01-01T00:00:00Z")}})
+
+db.adgroups_changelog.findOne({"data.budget": {$exists: true}}, {"data.budget": 1})
+db.adgroups_changelog.find({"data.budget": {$exists: true}, "_id": ObjectId("53b25ca258e7abca7a8b4568")}, {"data.budget": 1}).limit(10).pretty()
+
+!!-------Etsi kaikki recordind idelle--------
+db.adgroups_changelog.find({"object_id": ObjectId("56f127f258e7ab2b158b459b"), $or: [{"data.budget": {$exists: true}}, {"data.status": {$exists: true}} ]}, {"data.budget": 1, "data.status": 1}).limit(100).pretty()
+!!-----------
+
+
+mongoexport --db users --collection contacts --csv --fieldFile fields.txt --out /opt/backups/contacts.csv
+mongoexport -d changelog -c adgroups_changelog -q "{"data.budget": {$exists: true}, "_id": ObjectId("53b25ca258e7abca7a8b4568")}" -f budget,_id --out exportdir/myRecords.json
+
+mongoexport --type=csv --slaveOk -d changelog -c adgroups_changelog -q '{"data.budget": {$exists: true}, "_id": ObjectId("53b25ca258e7abca7a8b4568")}' -f "data.budget.daily","data.budget.lifetime","data.budget.type","_id" --out testi.csv
+
+
+
+db.adgroups_changelog.findOne({"data.status": {$exists: true}})
+db.adgroups_changelog.findOne({$or: [{"data.budget": {$exists: true}}, {"data.status": {$exists: true}}]})
+db.campaigns_changelog.findOne({"object_id": ObjectId("52a07b2b3890fc12165c5969"), "data.budget": {$exists: true}})
+db.campaigns_changelog.findOne({"object_id": ObjectId("52a07b2b3890fc12165c5969"), $or: [{"data.budget": {$exists: true}}, {"data.smartly_budget_allocation": {$exists: true}}]})
+
+
+{
+		"smartly_budget_allocation" : {
+			"use_budgetpool" : false,
+			"goal" : "link_click",
+			"value_from_bid" : false
+		}
+"data" : {
+		"smartly_budget_allocation" : false
+	},
+
+---MONGO---
+
+ssh indymongo2.smartly.io
+rs.slaveOk(true)
+use changelog
+
+
+-get port & ip-
+ssh suvi@indymongo1.smartly.io
+mongo
+use changelog
+db.runCommand({whatsmyuri : 1}) // db.serverCmdLineOpts()
+--> 127.0.0.1:55274
+
+--get dump--
+mongodump --host indymongo2.smartly.io --port 55274 --username suvi --db changelog --collection adgroups_changelog --out mongodump-2016-03-25 --oplog
+From mogo server (run outside of mongo)
+mongodump --db changelog --collection adgroups_changelog --out changelog 
+Move to own computer (run from local)
+scp suvi@indymongo1.smartly.io:/home/suvi/testi.csv changelog
+
+--get export--
+mongoexport --host indymongo2.smartly.io --port 56651 --username suvi --collection adgroups_changelog --db changelog --out export.csv
+
+
+__________
+
+PSEQUEL
+
+SELECT adgroup_id::text, SUM(spent) AS spend , objective, campaigns.budget_value AS campaign_budu, adgroups.budget_value AS adset_budu, adgroups.status
+FROM adgroups
+LEFT JOIN ad_stats ON adgroups.id = ad_stats.adgroup_id
+RIGHT JOIN campaigns ON campaigns.id = adgroups.campaign_id
+WHERE DATE = '2016-01-01'AND adgroups.status = 'ACTIVE' AND campaigns
+GROUP BY campaigns.id, adgroups.id, ad_stats.adgroup_id
+
+SELECT COUNT(DISTINCT campaigns.id) AS campaigns, COUNT(DISTINCT adgroups.id::text) AS adsets
+FROM adgroups
+LEFT JOIN ad_stats ON adgroups.id = ad_stats.adgroup_id
+LEFT JOIN campaigns ON campaigns.id = ad_stats.campaign_id
+WHERE DATE = '2016-01-01'AND adgroups.status = 'ACTIVE'
+
+\x5296f8023890fc821e70a8ce
+
+
+SELECT campaigns.id::text AS campaign_id, adgroups.id::text AS adset_id, SUM(ad_stats.spent) AS spend, adgroups.budget_value AS adset_budget, campaigns.objective, json_array_elements(ad_stats.actions_28d_view)
+FROM adgroups
+INNER JOIN ad_stats ON adgroups.id = ad_stats.adgroup_id
+INNER JOIN campaigns ON campaigns.id = ad_stats.campaign_id
+WHERE DATE = '2016-01-01'AND adgroups.status = 'ACTIVE'
+GROUP BY campaigns.id, adgroups.id
+
+----coonversions----
+SELECT ad_stats.adgroup_id, key, VALUE
+FROM ad_stats, jsonb_each_text(ad_stats.actions_28d_view)
+WHERE DATE = '2016-01-01'
+
+SELECT campaigns.id::text AS campaign_id, adgroups.id::text AS adset_id, SUM(ad_stats.spent) AS spend, adgroups.budget_value AS adset_budget, campaigns.objective, SUM(conversions.VALUE)
+FROM adgroups
+INNER JOIN ad_stats ON adgroups.id = ad_stats.adgroup_id
+INNER JOIN campaigns ON campaigns.id = ad_stats.campaign_id
+INNER JOIN (
+	SELECT ad_stats.adgroup_id, key, VALUE
+	FROM ad_stats, jsonb_each_text(ad_stats.actions_28d_view)
+	WHERE DATE = '2016-01-01'
+) conversions ON conversions.adgroup_id = adgroups.id
+WHERE DATE = '2016-01-01'AND adgroups.status = 'ACTIVE' AND conversions.key = campaigns.objective
+GROUP BY campaigns.id, adgroups.id
+
+
+-------R---------
+SELECT campaigns.id::text, campaigns.objective, campaigns.start_time, campaigns.end_time
+FROM campaigns
+WHERE campaigns.start_time > '2015-09-30'AND campaigns.start_time < '2016-04-01' AND campaigns.objective IS NOT NULL
+
+SELECT campaigns.id AS campaign_id, campaigns.id::text AS campaign_id_text, campaigns.start_time, campaigns.end_time, campaigns.objective, COUNT(DISTINCT adgroups.id) AS adgroups_count
+FROM adgroups
+INNER JOIN campaigns ON campaigns.id = adgroups.campaign_id
+WHERE campaigns.start_time >= '2016-01-01'AND campaigns.start_time < '2016-04-01' AND campaigns.objective IS NOT NULL AND campaigns.campaign_type NOT IN ('product_feed', 'reach_frequency', 'page_post_boosting')
+GROUP BY campaigns.id
+HAVING COUNT(DISTINCT adgroups.id) > 1
+
+--- ACTIVE CAMPAIGNS ---
+SELECT campaigns.id AS campaign_id, campaigns.id::text AS campaign_id_text, campaigns.start_time, campaigns.end_time, campaigns.objective, campaigns.status, COUNT(DISTINCT adgroups.id) AS adgroups_count, SUM(stats.impressions) AS impressions
+FROM adgroups
+INNER JOIN campaigns ON campaigns.id = adgroups.campaign_id
+INNER JOIN (
+	SELECT adgroup_id, SUM(impressions) AS impressions
+	FROM ad_stats
+	WHERE DATE BETWEEN '2016-01-01' AND '2016-04-01'
+	GROUP BY adgroup_id
+) stats ON stats.adgroup_id = adgroups.id
+WHERE campaigns.objective IS NOT NULL AND stats.impressions > 0 AND campaigns.campaign_type NOT IN ('product_feed', 'reach_frequency', 'page_post_boosting')
+GROUP BY campaigns.id
+HAVING COUNT(DISTINCT adgroups.id) > 1
+---
+---Campaign----
+SELECT campaign_id, date, SUM(impressions) AS impressions, COUNT(DISTINCT adgroup_id) AS adgroup_count
+FROM ad_stats
+WHERE DATE BETWEEN '2015-01-01' AND '2016-04-01' AND impressions > 0
+GROUP BY campaign_id, date
+HAVING SUM(impressions) > 0 AND COUNT(DISTINCT adgroup_id) > 1
+
+---Adset----
+SELECT adgroup_id, SUM(impressions) AS impressions, 
+FROM ad_stats
+WHERE DATE BETWEEN '2016-01-01' AND '2016-04-01' AND impressions > 0
+GROUP BY adgroup_id, date
+HAVING SUM(impressions) > 0
+
+----GET STATS FOR CAMPAIGN-----
+SELECT campaign_id::text, adgroup_id::text, date, SUM(impressions) AS impressions, SUM(spent) AS spent, SUM((actions_28d_view->'post_engagement')::text::INT) AS conversions
+FROM ad_stats
+WHERE campaign_id = E'\\x5357d556f789b81d1f8b466b' AND DATE BETWEEN '2015-01-01' AND '2016-01-01'
+GROUP BY campaign_id, adgroup_id, date
+HAVING SUM(impressions) > 0
+
+----GET ELIGBLE CAMPAIGNS & DATES -----
+SELECT campaign_id, date, campaigns.id::text AS campaign_id_text, campaigns.start_time, campaigns.end_time, campaigns.objective, campaign_stats.impressions, campaign_stats.adgroup_count
+FROM campaigns
+INNER JOIN ( 
+	SELECT campaign_id, date, SUM(impressions) AS impressions, COUNT(DISTINCT adgroup_id) AS adgroup_count
+	FROM ad_stats
+	WHERE DATE BETWEEN '2015-01-01' AND '2016-04-01' AND impressions > 0
+	GROUP BY campaign_id, date
+	HAVING SUM(impressions) > 0 AND COUNT(DISTINCT adgroup_id) > 1) AS campaign_stats
+ON campaign_stats.campaign_id = campaigns.id
+WHERE WHERE campaigns.objective IS NOT NULL AND stats.impressions > 0 AND campaigns.campaign_type NOT IN ('product_feed', 'reach_frequency', 'page_post_boosting')
+
+--------
+
+SELECT campaign_id, date, SUM(impressions) AS impressions, COUNT(DISTINCT adgroup_id) AS adgroup_count
+FROM ad_stats
+INNER JOIN (
+	SELECT id, objective
+	FROM campaigns
+	WHERE campaigns.objective IS NOT NULL AND campaigns.campaign_type NOT IN ('product_feed', 'reach_frequency', 'page_post_boosting')
+	) AS campaign_objectives
+	ON campaign_objectives.id = ad_stats.campaign_id
+INNER JOIN (
+	SELECT adgroup_id, SUM(impressions)
+	FROM ad_stats
+	GROUP BY adgroup_id, date
+	HAVING SUM(impressions) > 0
+	) AS ad_sets
+	ON ad_sets.adgroup_id = ad_stats.adgroup_id
+WHERE DATE BETWEEN '2015-01-01' AND '2016-04-01'
+GROUP BY campaign_id, date
+HAVING COUNT(DISTINCT adgroup_id) > 1 AS campaign_stats
+
+--------
+
+SELECT SUM(impressions) AS impressions, SUM(spent) AS spent, SUM((actions_28d_view->'<conversion>')::text::INT) AS conversions
+FROM ad_stats
+WHERE adgroup_id = E'<id>' AND DATE = '<date>'
+GROUP BY adgroup_id, date
+
+SELECT adgroup_id, SUM(impressions) AS impressions, SUM(spent) AS spent, SUM((actions_28d_view->'<conversion>')::text::INT) AS conversions
+FROM ad_stats
+WHERE DATE BETWEEN '2015-01-01' AND '2016-04-01'
+GROUP BY adgroup_id, date
+HAVING SUM(impressions) > 0
