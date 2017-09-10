@@ -83,20 +83,21 @@ runCode <- function() {
 	col <- "impressioins"
 	data.campaigns <- getSimulatedCampaigns(data.distributions, "impressions")
 	# save(data.campaigns, file = "data030917.RData")
+	# load("data030917.RData")
 
 	addAllocations(data.returns, optimalAlgorithm, "optimal")
 
-	# get test data for two campaigns: 
-	# test <- data.distributions[group_id %in% c("5527905fd1a561f72d8b456c","583d0bf17bff8500408b4567")]
-	# returns <- generateSamples(test, "impressions")
-	# returns <- returns[date %in% c(as.Date("2016-03-31"),as.Date("2016-12-27"))]
-	# returns.history <- addHistoryColumn(returns)
-	# campaigns <- getCampaignData(returns.history)
-	# test <- getEqualAllocation(campaigns)
-
-	# Simulations
+	test <- getTestData(data.campaigns)
 
 }
+
+# get test data for two campaigns:
+getTestData <- function(data.campaigns) {
+	test <- data.campaigns[group_id %in% c("5527905fd1a561f72d8b456c","583d0bf17bff8500408b4567")]
+	# returns <- returns[date %in% c(as.Date("2016-03-31"),as.Date("2016-12-27"))]
+	return(test)
+}
+
 #--------------------
 
 getSavedData <- function () {
@@ -160,6 +161,11 @@ getRewardDistributions <- function(dataTable) {
 }
 
 #CREATING SAMPLED REWARDS-----------------------
+# Converts data on campaign level with r column containing data for each ad set
+# Columns for adsetData: 
+# r = return for the date
+# r_history = returns before the date
+# weight = initial weight column with equal allocations
 
 getSimulatedCampaigns <- function(data, conversion_column) {
 	data.returns <- generateSamples(data, conversion_column)
@@ -239,17 +245,17 @@ getOptimalAllocation <- function (data) {
 # output <- getReturnForAlgorithm(test, optimalAllocation, "test")
 
 getReturnForAlgorithm <- function (dataTable, algorithm, name) {
+	# print("Calculating returns for algorithm")
+	cat("\r       Calculating returns for algorithm ", name)
 	columnName <- paste("r", name, sep="_")
 	data <- copy(dataTable)
 	setkey(data, group_id, date)
 	rows <- data[, .N]
 	budget <- 100
-	pb <- txtProgressBar(min = 1, max = rows, style = 3)
 
 	# for(i in 1:rows) {
 	for(i in 1:rows) {
 		adsetData <- data[i, r][[1]]
-		# cat("Row: ", i, " date: ", as.character(data[i, date]), "\n")
 
 		if (length(unlist(adsetData[, r_history])) == 0) {
 			# Set inital allocations as equal allocation
@@ -272,12 +278,12 @@ getReturnForAlgorithm <- function (dataTable, algorithm, name) {
 			adsetData[, total_spend := total_spend + spend]
 		}
 		set(data, i, "r", list(list(adsetData)))
-		setTxtProgressBar(pb, i)
+		cat("\r", ceiling(i/rows) * 100, "%")
 	}
 
 	data.result <- copy(dataTable)
 	data.result[, (columnName) := lapply(r, getReturn)]
-	close(pb)
+	cat("\r\u2713     ")
 	return (data.result)
 }
 
