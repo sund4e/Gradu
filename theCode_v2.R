@@ -79,15 +79,17 @@ getData <- function(){
 runCode <- function() {
 	data <- getSavedData()
 	data.distributions <- getRewardDistributions(data)
+	data.adsets <- data[, .(spend = 0), by = .(id, group_id)] #for temp table in getReturnForAlgorthm
 
 	col <- "impressioins"
 	data.campaigns <- getSimulatedCampaigns(data.distributions, "impressions")
 	# save(data.campaigns, file = "data030917.RData")
 	# load("data030917.RData")
 
-	addAllocations(data.returns, optimalAlgorithm, "optimal")
+	data.optimal <- getReturnForAlgorithm(data.campaigns, optimalAllocation, "optimal", data.adsets)
 
-	test <- getTestData(data.campaigns)
+	# test <- getTestData(data.campaigns)
+	# output <- getReturnForAlgorithm2(test, optimalAllocation2, "test", data.adsets)
 
 }
 
@@ -244,71 +246,46 @@ getOptimalAllocation <- function (data) {
 
 # output <- getReturnForAlgorithm(test, optimalAllocation2, "test")
 
-getReturnForAlgorithm <- function (dataTable, algorithm, name) {
-	# print("Calculating returns for algorithm")
-	# cat("\r       Calculating returns for algorithm ", name)
-	columnName <- paste("r", name, sep="_")
+getReturnForAlgorithm <- function (dataTable, algorithm, name, spendData) {
 	data <- copy(dataTable)
 	setkey(data, group_id, date)
 	rows <- data[, .N]
 	budget <- 100
 
 	# Temp table for preserving spend history
-	spendData <- data.table(
-		id = numeric(),
-		group_id = numeric(),
-		spend = numeric()
-	)
+	spendData[, spend := 0]
 	setkey(spendData, id)
 
-	# for(i in 1:rows) {
+	cat("Allocating budget with algorithm:", name, "\n")
+	cat("0 % ...")
+
 	for(i in 1:rows) {
-		# cat("Row: ", i, "\n")
+		#Set allocations
 		adsetData <- data[i, r][[1]]
-		campiagn_id <-data[i, group_id]
 		setkey(adsetData, id)
+		algorithm(adsetData)
 
-		adsets.old <- adsetData[adsetData[, lapply(r_history, length) != 0]]
-		adsets.new <- adsetData[adsetData[, lapply(r_history, length) == 0]]
-
-		# For new adsets keep the equal allocation
-		# and add new rows for each to the spend table
-		if(adsets.new[, .N] != 0) {
-			spend.new <- adsets.new[, .(id, group_id = campiagn_id, spend = weight * budget)]
-			spendData <- rbindlist(list(spendData, spend.new))
+		#Set spend
+		getSpend <- function (spend, adset_id, budget) {
+			weight <- adsetData[id == adset_id, weight]
+			return (spend + weight * budget)
 		}
+		spendData[id %in% c(adsetData$id), spend := mapply(getSpend, spend, id, budget)]
 
-		# For old adsets allocate the remaining weight according to algorithm
-		# and update their spend in spend table
-		allocableWeight <- adsets.old[, .N]/adsetData[, .N]
-		if(allocableWeight != 0) {
-			getSpend <- function (spend, adset_id, budget) {
-				weight <- adsets.old[id == adset_id, weight]
-				return (spend + weight * budget)
-			}
-			algorithm(adsets.old, allocableWeight)
-			spendData[id %in% c(adsets.old$id), spend := mapply(getSpend, spend, id, budget)]
-		}
-
-		adsetData <- rbindlist(list(adsets.new, adsets.old))
+		#Set updated adset data to campaign row
 		set(data, i, "r", list(list(adsetData)))
 
-		print("Spend data:")
-		print(spendData)
-		print("AdsetData:")
-		print(adsetData)
-		print("------------")
-		# cat("\r", ceiling(i/rows) * 100, "%")
+		#Log progress to console
+		if(i %% (rows / 10)  == 0 ) {
+			cat(i/rows * 100, "% ... ");
+		}
 	}
 
-	data.result <- copy(dataTable)
-	data.result[, (columnName) := lapply(r, getReturn)]
-	# cat("\r\u2713     ")
-	return (data.result)
-}
-
-getTotalSpend <- function(spend, id.adgroup, adsetData.previous) {
-	return(adsetData.previous[id == id.adgroup, total_spend] + spend)
+	cat("\nCalculating returns...")
+	columnName <- paste("r", name, sep="_")
+	data[, (columnName) := lapply(r, getReturn)]
+	cat(" \u2713\n")
+	return (data)
 }
 
 # Calculates total return from the adset table
@@ -316,40 +293,18 @@ getReturn <- function(adsetData) {
 	return (sum(adsetData$weight * adsetData$r))
 }
 
-optimalAllocation <- function (adsetData, adsetIds.old, allocable.weight) {
-	adsets.old <- adsetData[id %in% adsetIds.old]
-	max <- adsets.old[, max(r)]
+optimalAllocation <- function (adsetData) {
+	adsets.old <- adsetData[adsetData[, lapply(r_history, length) != 0]]
 
-	getWeight <- function(r) {
-		return (if(r==max) allocable.weight else 0)
+	if(adsets.old[, .N] != 0) {
+		allocableWeight <- adsets.old[, .N]/adsetData[, .N]
+		max <- adsets.old[, max(r)]
+		getWeight <- function(r) {
+			return (if(r==max) allocableWeight else 0)
+		}
+
+		adsetData[id %in% c(adsets.old$id), weight := as.numeric(lapply(r, getWeight))]
 	}
-
-	adsets.old[, weight := as.numeric(lapply(r, getWeight))]
-}
-
-optimalAllocation2 <- function (adsetData, allocableWeight) {
-	max <- adsetData[, max(r)]
-
-	getWeight <- function(r) {
-		return (if(r==max) allocableWeight else 0)
-	}
-
-	adsetData[, weight := as.numeric(lapply(r, getWeight))]
-}
-
-addAllocations <- function (data, algorithm, columnName) {
-	setkey(data, date, group_id)
-	col = paste("r", columnName, sep="_")
-	data[, (col) := mapply(function(data, day, campaign, adset) {
-		algorithm(data, day, campaign, adset)
-	}, data=.(.SD), day=date, campaign=group_id, adset=id)]
-}
-
-optimalAlgorithm <- function (data, day, campaign, adset) {
-	if (data[.(day, campaign, adset), unlist(r)] == data[.(day, campaign), max(unlist(r))]) {
-		return (1)
-	}
-	return(0)
 }
 
 summaryData <- function(dataTable) {
