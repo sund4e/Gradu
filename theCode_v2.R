@@ -247,6 +247,15 @@ getReturns <- function (dataTable, spendData) {
 	rows <- data[, .N]
 	budget <- 100
 
+	# data[i, `:=` (
+	# 		optimal = 0,
+	# 		greedy = 0,
+	# 		egreedy.05 = 0,
+	# 		egreedy.01 = 0,
+	# 		decreasing.egreedy.1 = 0,
+	# 		decreasing.egreedy.10 = 0
+	# 	)]
+
 	# Temp table for preserving spend history
 	spendData[, `:=` (
 		optimal = 0,
@@ -270,18 +279,17 @@ getReturns <- function (dataTable, spendData) {
 		getReturn <- function(column) {
 			return (sum(adsetData[, get(column)] * adsetData$r))
 		}
-		data[i, `:=` (
-			optimal = getReturn('optimal'),
-			greedy = getReturn('greedy'),
-			egreedy.05 = getReturn('egreedy.05'),
-			egreedy.01 = getReturn('egreedy.01'),
-			decreasing.egreedy.1 = getReturn('decreasing.egreedy.1'),
-			decreasing.egreedy.10 = getReturn('decreasing.egreedy.10')
-		)]
+
+		set(data, i=i, j="optimal", value=getReturn('optimal'))
+		set(data, i=i, j="greedy", value=getReturn('greedy'))
+		set(data, i=i, j="egreedy.05", value=getReturn('egreedy.05'))
+		set(data, i=i, j="egreedy.01", value=getReturn('egreedy.01'))
+		set(data, i=i, j="decreasing.egreedy.1", value=getReturn('decreasing.egreedy.1'))
+		set(data, i=i, j="decreasing.egreedy.10", value=getReturn('decreasing.egreedy.10'))
 
 		#Log progress to console
 		if(i %% 100  == 0 ) {
-			cat("(", ceiling(i/rows * 100), "% )");
+			cat("(", ceiling(i/rows * 100), "% ) \n", sep="");
 		} else {
 			cat(".")
 		}
@@ -319,28 +327,25 @@ testing <- function (data.adsets, test) {
 updateSpend <- function (adsetData, spendData, budget) {
 	rows <- adsetData[, .N]
 	for (i in 1:rows) {
-		spendData[id == adsetData[i, id], `:=` (
-			optimal = adsetData[i, optimal] * budget,
-			greedy = adsetData[i, greedy] * budget,
-			egreedy.05 = adsetData[i, egreedy.05] * budget,
-			egreedy.01 = adsetData[i, egreedy.01] * budget,
-			decreasing.egreedy.1 = adsetData[i, decreasing.egreedy.1] * budget,
-			decreasing.egreedy.10 = adsetData[i, decreasing.egreedy.10] * budget
-		)]
+		adset_id <- adsetData[i, id]
+		set(spendData, i=which(spendData[["id"]] == adset_id), j="optimal", value=(adsetData[i, optimal] * budget))
+		set(spendData, i=which(spendData[["id"]] == adset_id), j="greedy", value=(adsetData[i, greedy] * budget))
+		set(spendData, i=which(spendData[["id"]] == adset_id), j="egreedy.05", value=(adsetData[i, egreedy.05] * budget))
+		set(spendData, i=which(spendData[["id"]] == adset_id), j="egreedy.01", value=(adsetData[i, egreedy.05] * budget))
+		set(spendData, i=which(spendData[["id"]] == adset_id), j="decreasing.egreedy.1", value=(adsetData[i, decreasing.egreedy.1] * budget))
+		set(spendData, i=which(spendData[["id"]] == adset_id), j="decreasing.egreedy.10", value=(adsetData[i, decreasing.egreedy.1] * budget))
 	}
 }
 
 getAllocations <- function (adsetData, spendData) {
 	#Set equal allocations
 	equal <- 1/adsetData[, .N]
-	adsetData[, `:=` (
-		optimal = equal,
-		greedy = equal,
-		egreedy.05 = equal,
-		egreedy.01 = equal,
-		decreasing.egreedy.1 = equal,
-		decreasing.egreedy.10 = equal
-	)]
+	set(adsetData, i=NULL, j="optimal", value=equal)
+	set(adsetData, i=NULL, j="greedy", value=equal)
+	set(adsetData, i=NULL, j="egreedy.05", value=equal)
+	set(adsetData, i=NULL, j="egreedy.01", value=equal)
+	set(adsetData, i=NULL, j="decreasing.egreedy.1", value=equal)
+	set(adsetData, i=NULL, j="decreasing.egreedy.10", value=equal)
 
 	adsetData[, r_avrg := sapply(r_history, mean)]
 	adsets.old <- adsetData[adsetData[, sapply(r_history, length) != 0]]
@@ -369,7 +374,7 @@ getAllocations <- function (adsetData, spendData) {
 
 		getEpsilonGreedyWeight <- function(r_avrg, epsilon) {
 			exploration.weight = epsilon * allocableWeight / (n)
-			exploitation.weight = (1 - epsilon) * allocableWeight + exploration.weight
+			exploitation.weight = {1 - epsilon} * allocableWeight + exploration.weight
 			return (if(r_avrg==max_avrg) exploitation.weight else exploration.weight)
 		}
 
@@ -377,14 +382,22 @@ getAllocations <- function (adsetData, spendData) {
 			epsilon <- min(constant/t, 1)
 			return (getEpsilonGreedyWeight(r_avrg, epsilon))
 		}
+		
+		# ids <- adsets.old$id
+		# set(adsetData, i=which(adsetData$id %in% ids), j="optimal", value=sapply(adsetData[which(adsetData$id %in% ids), r], getOptimalWeight))
+		# set(adsetData, i=which(adsetData$id %in% ids), j="greedy", value=sapply(adsetData[which(adsetData$id %in% ids), r], getOptimalWeight))
+		# set(adsetData, i=which(adsetData$id %in% ids), j="egreedy.05", value=sapply(adsetData[which(adsetData$id %in% ids), r], getEpsilonGreedyWeight, e=epsilon05))
+		# set(adsetData, i=which(adsetData$id %in% ids), j="egreedy.01", value=sapply(adsetData[which(adsetData$id %in% ids), r], getEpsilonGreedyWeight, e=epsilon01))
+		# set(adsetData, i=which(adsetData$id %in% ids), j="decreasing.egreedy.1", value=sapply(adsetData[which(adsetData$id %in% ids), r], getDecreasingEpsilonGreedyWeight, c=c1))
+		# set(adsetData, i=which(adsetData$id %in% ids), j="decreasing.egreedy.10", value=sapply(adsetData[which(adsetData$id %in% ids), r], getDecreasingEpsilonGreedyWeight, c=c10))
 
 		adsetData[id %in% c(adsets.old$id), `:=` (
 			optimal = sapply(r, getOptimalWeight),
 			greedy = sapply(r_avrg, getGreedyWeight),
-			egreedy.05 = as.numeric(lapply(r_avrg, getEpsilonGreedyWeight, e=epsilon05)),
-			egreedy.01 = as.numeric(lapply(r_avrg, getEpsilonGreedyWeight, e=epsilon01)),
-			decreasing.egreedy.1 = as.numeric(lapply(r_avrg, getDecreasingEpsilonGreedyWeight, c=c1)),
-			decreasing.egreedy.10 = as.numeric(lapply(r_avrg, getDecreasingEpsilonGreedyWeight, c=c10))
+			egreedy.05 = sapply(r_avrg, getEpsilonGreedyWeight, e=epsilon05),
+			egreedy.01 = sapply(r_avrg, getEpsilonGreedyWeight, e=epsilon01),
+			decreasing.egreedy.1 = sapply(r_avrg, getDecreasingEpsilonGreedyWeight, c=c1),
+			decreasing.egreedy.10 = sapply(r_avrg, getDecreasingEpsilonGreedyWeight, c=c10)
 		)]
 	}
 }
