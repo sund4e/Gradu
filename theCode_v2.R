@@ -79,7 +79,7 @@ getData <- function(){
 runCode <- function() {
 	data <- getSavedData()
 	data.distributions <- getRewardDistributions(data)
-	data.adsets <- data[, .(spend = 0), by = .(id, group_id)] #for temp table in getReturnForAlgorthm
+	data.adsets <- data[, .(optimal = 0), by = .(id, group_id)] #for temp table in getReturnForAlgorthm
 
 	col <- "impressioins"
 	data.campaigns <- getSimulatedCampaigns(data.distributions, "impressions")
@@ -89,13 +89,13 @@ runCode <- function() {
 	data.optimal <- getReturnForAlgorithm(data.campaigns, optimalAllocation, "optimal", data.adsets)
 
 	# test <- getTestData(data.campaigns)
-	# output <- getReturnForAlgorithm2(test, optimalAllocation2, "test", data.adsets)
+	# output <- getReturnForAlgorithm(test, optimalAllocation, "test", data.adsets)
 
 }
 
 # get test data for two campaigns:
 getTestData <- function(data.campaigns) {
-	test <- data.campaigns[group_id %in% c("5527905fd1a561f72d8b456c","583d0bf17bff8500408b4567")]
+	test <- data.campaigns[group_id %in% c("5527905fd1a561f72d8b456c","5628e7e858e7abf6308b456c")]
 	# returns <- returns[date %in% c(as.Date("2016-03-31"),as.Date("2016-12-27"))]
 	return(test)
 }
@@ -121,9 +121,12 @@ crunchData <- function(dataframe) {
 	data <- data[bid > 0] #Filter out rows that have zero/NA in bid
 	data <- data[, id:=paste(adset_id, bid, sep="")] #Create unique ids for adsets having different bids
 	data <- data[, adsets_in_campaign:=.N, by=.(group_id, date)][adsets_in_campaign > 1] #Filter out day rows when campaign has only one ad set
-	data <- data[, days_of_data:=.N, by=id][days_of_data >= 30] # Exclude ad sets with less than 30 days of data
+	data <- data[, days_of_data:=.N, by=id][days_of_data >= 100] # Exclude ad sets with less than 30 days of data
 
-
+	# Remove all duplicate keys 
+	# (some of the data is messed up and different ad sets have same ids)
+	setkey(data, id, group_id, date)
+	data <- unique(data)
 
 	#convert data types
 	data <- data[, budget:=as.numeric(budget)]
@@ -237,74 +240,159 @@ addEqualAllocation <- function(dataTable) {
 
 #----------------------------------------------------
 
-
-
-getOptimalAllocation <- function (data) {
-	
-
-}
-
-# output <- getReturnForAlgorithm(test, optimalAllocation2, "test")
-
-getReturnForAlgorithm <- function (dataTable, algorithm, name, spendData) {
+getReturns <- function (dataTable, spendData) {
+	cat()
 	data <- copy(dataTable)
 	setkey(data, group_id, date)
 	rows <- data[, .N]
 	budget <- 100
 
 	# Temp table for preserving spend history
-	spendData[, spend := 0]
+	spendData[, `:=` (
+		optimal = 0,
+		greedy = 0,
+		egreedy.05 = 0,
+		egreedy.01 = 0,
+		decreasing.egreedy.1 = 0,
+		decreasing.egreedy.10 = 0
+	)]
 	setkey(spendData, id)
 
-	cat("Allocating budget with algorithm:", name, "\n")
-	cat("0 % ...")
-
+	cat("Calculating returns with algorithms \n")
 	for(i in 1:rows) {
 		#Set allocations
-		adsetData <- data[i, r][[1]]
+		adsetData <- copy(data[i, r][[1]])
 		setkey(adsetData, id)
-		algorithm(adsetData)
+		getAllocations(adsetData, spendData)
+		updateSpend(adsetData, spendData, budget)
 
-		#Set spend
-		getSpend <- function (spend, adset_id, budget) {
-			weight <- adsetData[id == adset_id, weight]
-			return (spend + weight * budget)
+		#Set returns
+		getReturn <- function(column) {
+			return (sum(adsetData[, get(column)] * adsetData$r))
 		}
-		spendData[id %in% c(adsetData$id), spend := mapply(getSpend, spend, id, budget)]
-
-		#Set updated adset data to campaign row
-		set(data, i, "r", list(list(adsetData)))
+		data[i, `:=` (
+			optimal = getReturn('optimal'),
+			greedy = getReturn('greedy'),
+			egreedy.05 = getReturn('egreedy.05'),
+			egreedy.01 = getReturn('egreedy.01'),
+			decreasing.egreedy.1 = getReturn('decreasing.egreedy.1'),
+			decreasing.egreedy.10 = getReturn('decreasing.egreedy.10')
+		)]
 
 		#Log progress to console
-		if(i %% (rows / 10)  == 0 ) {
-			cat(i/rows * 100, "% ... ");
+		if(i %% 100  == 0 ) {
+			cat("(", ceiling(i/rows * 100), "% )");
+		} else {
+			cat(".")
 		}
 	}
 
-	cat("\nCalculating returns...")
-	columnName <- paste("r", name, sep="_")
-	data[, (columnName) := lapply(r, getReturn)]
-	cat(" \u2713\n")
+	cat("100% \n")
 	return (data)
 }
 
-# Calculates total return from the adset table
-getReturn <- function(adsetData) {
-	return (sum(adsetData$weight * adsetData$r))
+#Testing
+testing <- function (data.adsets, test) {
+	spendData <- copy(data.adsets)
+	spendData[, `:=` (
+		optimal = 0,
+		greedy = 0,
+		egreedy.05 = 0,
+		egreedy.01 = 0,
+		decreasing.egreedy.1 = 0,
+		decreasing.egreedy.10 = 0
+	)]
+	adsetData <- copy(test[250,r][[1]])
+
+	getAllocations(adsetData, spendData)
+	# updateSpend2(adsetData, spendData, 100)
+
+	benchmark(
+		updateSpend(adsetData, spendData, 100), 
+		updateSpend2(adsetData, spendData, 100), 
+		order="elapsed", 
+		replications=100
+	)
+	# spendData[group_id == '5628e7e858e7abf6308b456c']	
 }
 
-optimalAllocation <- function (adsetData) {
-	adsets.old <- adsetData[adsetData[, lapply(r_history, length) != 0]]
+updateSpend <- function (adsetData, spendData, budget) {
+	rows <- adsetData[, .N]
+	for (i in 1:rows) {
+		spendData[id == adsetData[i, id], `:=` (
+			optimal = adsetData[i, optimal] * budget,
+			greedy = adsetData[i, greedy] * budget,
+			egreedy.05 = adsetData[i, egreedy.05] * budget,
+			egreedy.01 = adsetData[i, egreedy.01] * budget,
+			decreasing.egreedy.1 = adsetData[i, decreasing.egreedy.1] * budget,
+			decreasing.egreedy.10 = adsetData[i, decreasing.egreedy.10] * budget
+		)]
+	}
+}
+
+getAllocations <- function (adsetData, spendData) {
+	#Set equal allocations
+	equal <- 1/adsetData[, .N]
+	adsetData[, `:=` (
+		optimal = equal,
+		greedy = equal,
+		egreedy.05 = equal,
+		egreedy.01 = equal,
+		decreasing.egreedy.1 = equal,
+		decreasing.egreedy.10 = equal
+	)]
+
+	adsetData[, r_avrg := sapply(r_history, mean)]
+	adsets.old <- adsetData[adsetData[, sapply(r_history, length) != 0]]
+	n = adsets.old[, .N]
 
 	if(adsets.old[, .N] != 0) {
 		allocableWeight <- adsets.old[, .N]/adsetData[, .N]
 		max <- adsets.old[, max(r)]
-		getWeight <- function(r) {
+		max_avrg <- adsets.old[, max(r_avrg)]
+		epsilon05 = 0.5
+		epsilon01 = 0.1
+		c1 = 1
+		c10 = 10
+		t = adsets.old[, max(sapply(r_history, length))]
+
+		# Compute confidence bounds for UCB
+		# adsetData[, r_ucb := mapply(getUCB, r_avrg, id, spendData)] 
+
+		getOptimalWeight <- function(r) {
 			return (if(r==max) allocableWeight else 0)
 		}
 
-		adsetData[id %in% c(adsets.old$id), weight := as.numeric(lapply(r, getWeight))]
+		getGreedyWeight <- function(r_avrg) {
+			return (if(r_avrg==max_avrg) allocableWeight else 0)
+		}
+
+		getEpsilonGreedyWeight <- function(r_avrg, epsilon) {
+			exploration.weight = epsilon * allocableWeight / (n)
+			exploitation.weight = (1 - epsilon) * allocableWeight + exploration.weight
+			return (if(r_avrg==max_avrg) exploitation.weight else exploration.weight)
+		}
+
+		getDecreasingEpsilonGreedyWeight <- function(r_avrg, constant) {
+			epsilon <- min(constant/t, 1)
+			return (getEpsilonGreedyWeight(r_avrg, epsilon))
+		}
+
+		adsetData[id %in% c(adsets.old$id), `:=` (
+			optimal = sapply(r, getOptimalWeight),
+			greedy = sapply(r_avrg, getGreedyWeight),
+			egreedy.05 = as.numeric(lapply(r_avrg, getEpsilonGreedyWeight, e=epsilon05)),
+			egreedy.01 = as.numeric(lapply(r_avrg, getEpsilonGreedyWeight, e=epsilon01)),
+			decreasing.egreedy.1 = as.numeric(lapply(r_avrg, getDecreasingEpsilonGreedyWeight, c=c1)),
+			decreasing.egreedy.10 = as.numeric(lapply(r_avrg, getDecreasingEpsilonGreedyWeight, c=c10))
+		)]
 	}
+}
+
+getUCB <- function (r, id, spendData) {
+	adset_spend <- spendData[id, spend]
+	campaign_spend <- 
+	return(r + sqrt((2 * ln(campaign_spend))/adset_spend))
 }
 
 summaryData <- function(dataTable) {
@@ -349,4 +437,40 @@ countTime <- function() {
 	system.time({
 		samples[, max_impression := lapply(impressions, function(x) max(x))]
 	})
+}
+
+#Testing
+testUpdateSpend <- function (data.adsets, test) {
+	spendData <- data.adsets
+	spendData[, `:=` (
+		optimal = 0,
+		greedy = 0,
+		egreedy.05 = 0,
+		egreedy.01 = 0,
+		decreasing.egreedy.1 = 0,
+		decreasing.egreedy.10 = 0
+	)]
+	adsetData <- test[250,r][[1]]
+	benchmark(
+		updateSpend(adsetData, spendData, 100), 
+		updateSpend2(adsetData, spendData, 100), 
+		order="elapsed", 
+		replications=100
+	)
+	# spendData[group_id == '5628e7e858e7abf6308b456c']	
+}
+
+updateSpend2 <- function (adsetData, spendData, budget) {
+	getSpend <- function (spend, column, adset_id, budget) {
+		weight <- adsetData[id == adset_id, get(column)]
+		return (spend + weight * budget)
+	}
+	spendData[id %in% c(adsetData$id), `:=`(
+		optimal = mapply(getSpend, optimal, 'optimal', id, budget),
+		greedy = mapply(getSpend, greedy, 'greedy', id, budget),
+		egreedy.05 = mapply(getSpend, egreedy.05, 'egreedy.05', id, budget),
+		egreedy.01 = mapply(getSpend, egreedy.01, 'egreedy.01', id, budget),
+		decreasing.egreedy.1 = mapply(getSpend, decreasing.egreedy.1, 'decreasing.egreedy.1', id, budget),
+		decreasing.egreedy.10 = mapply(getSpend, decreasing.egreedy.10, 'decreasing.egreedy.10', id, budget)
+	)]
 }
