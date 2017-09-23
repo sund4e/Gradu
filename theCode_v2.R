@@ -86,7 +86,7 @@ runCode <- function() {
 	# save(data.campaigns, file = "data030917.RData")
 	# load("data030917.RData")
 
-	data.optimal <- getReturnForAlgorithm(data.campaigns, optimalAllocation, "optimal", data.adsets)
+	data.optimal <- getReturns(data.campaigns, data.adsets)
 
 	# test <- getTestData(data.campaigns)
 	# output <- getReturnForAlgorithm(test, optimalAllocation, "test", data.adsets)
@@ -288,14 +288,14 @@ getReturns <- function (dataTable, spendData) {
 		set(data, i=i, j="decreasing.egreedy.10", value=getReturn('decreasing.egreedy.10'))
 
 		#Log progress to console
-		if(i %% 100  == 0 ) {
+		if(i %% 1000  == 0 ) {
 			cat("(", ceiling(i/rows * 100), "% ) \n", sep="");
-		} else {
+		} else if(i %% 10  == 0 ) {
 			cat(".")
 		}
 	}
 
-	cat("100% \n")
+	cat("(100%) \n")
 	return (data)
 }
 
