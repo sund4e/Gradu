@@ -88,6 +88,12 @@ runCode <- function() {
 
 	data.optimal <- getReturns(data.campaigns, data.adsets)
 
+	#Adset test-----------------
+	spendData <- data[, .(optimal = 0), by = .(id, group_id)]
+	data.adsets <- getSimulatedAdsets(data.distributions, "impressions")
+
+	#----------------------------
+
 	# test <- getTestData(data.campaigns)
 	# output <- getReturnForAlgorithm(test, optimalAllocation, "test", data.adsets)
 
@@ -121,7 +127,7 @@ crunchData <- function(dataframe) {
 	data <- data[bid > 0] #Filter out rows that have zero/NA in bid
 	data <- data[, id:=paste(adset_id, bid, sep="")] #Create unique ids for adsets having different bids
 	data <- data[, adsets_in_campaign:=.N, by=.(group_id, date)][adsets_in_campaign > 1] #Filter out day rows when campaign has only one ad set
-	data <- data[, days_of_data:=.N, by=id][days_of_data >= 100] # Exclude ad sets with less than 30 days of data
+	data <- data[, days_of_data:=.N, by=id][days_of_data >= 30] # Exclude ad sets with less than 30 days of data
 
 	# Remove all duplicate keys 
 	# (some of the data is messed up and different ad sets have same ids)
@@ -236,6 +242,90 @@ addEqualAllocation <- function(dataTable) {
 	w <- 1/data[, .N]
 	data[, weight := w]
 	return(data)
+}
+
+#------------------------------------------------
+#ADSETS
+getDay <- function(date, campaign.rows) {
+	campaign.rows[date == date, 1:.N, by=date]
+}
+
+getSimulatedAdsets <- function(data, conversion_column) {
+	data.returns <- generateSamples(data, conversion_column)
+	cat("Add column for campaign day... ")
+	days <- data.returns[, .(date = unique(date)), by = .(group_id)]
+	days[, day := 1:.N, by = .(group_id)]
+
+	setkey(data.returns, group_id, date, id)
+	setkey(days, group_id, date)
+	data.returns <- data.returns[days]
+
+	cat("\u2713\n")
+	return (data.returns)
+}
+# output <- calculateReturns(data.adsets)
+# output[group_id=="55fbd93458e7ab426a8b4567"][day==303]
+calculateReturns <- function (dataTable) {
+	data <- copy(dataTable)
+	setkey(data, group_id, day, id)
+	days <- max(data$day)
+	budget <- 100
+
+	#As default, set equal allocations for all ad sets
+	data[, equal := 1/.N, by=.(group_id, day)]
+
+	cat("Calculating returns with algorithms \n")
+	for(i in 1:5) { #two campaign have 303 days
+		history <- data[day > 1]
+		setkey(history, group_id, day, id)
+		# adsets.old <- data[day == i & id %in% history$id]
+		# data[day == i, r_max := max(r), by=.(group_id)]
+
+		data[
+			day == i & id %in% history$id, 
+			optimal := mapply(getOptimalWeight, .SD$r, .SD[, max(r)], .SD[, sum(equal)]), 
+			by=.(group_id), 
+			.SDcols=c("id", "r", "equal")
+		]
+
+		data[
+			day == i & id %in% history$id, 
+			greedy := mapply(getGreedyWeight, .(.SD), .(history), .SD[, sum(equal)]), 
+			by=.(group_id), 
+			.SDcols=c("id", "r", "equal")
+		]
+		
+		
+		# data[day == i, allocation := mapply(getAllocation, .(.SD), .(history)), by=.(group_id), .SDcols=c("id", "r")]
+		
+		#Log progress to console
+		if(i %% 100  == 0 ) {
+			cat("(", ceiling(i/days * 100), "% ) \n", sep="");
+		} else {
+			cat(".")
+		}
+	}
+
+	cat("(100%) \n")
+	return (data)
+}
+
+getOptimalWeight <- function(returns, max, allocableWeight) {
+	return (sapply(returns, function(r) {
+		return (if(r==max) allocableWeight else 0)
+	}))
+}
+
+getGreedyWeight <- function(adsets, history, allocableWeight) {
+	averages <- history[id %in% adsets$id, mean(r)]
+	max <- max(averages)
+	getOptimalWeight(averages, max, allocableWeight)
+}
+
+getAllocation <- function (adsets, history) {
+	print(history)
+	print(adsets)
+	return (adsets$r)
 }
 
 #----------------------------------------------------
@@ -382,14 +472,6 @@ getAllocations <- function (adsetData, spendData) {
 			epsilon <- min(constant/t, 1)
 			return (getEpsilonGreedyWeight(r_avrg, epsilon))
 		}
-		
-		# ids <- adsets.old$id
-		# set(adsetData, i=which(adsetData$id %in% ids), j="optimal", value=sapply(adsetData[which(adsetData$id %in% ids), r], getOptimalWeight))
-		# set(adsetData, i=which(adsetData$id %in% ids), j="greedy", value=sapply(adsetData[which(adsetData$id %in% ids), r], getOptimalWeight))
-		# set(adsetData, i=which(adsetData$id %in% ids), j="egreedy.05", value=sapply(adsetData[which(adsetData$id %in% ids), r], getEpsilonGreedyWeight, e=epsilon05))
-		# set(adsetData, i=which(adsetData$id %in% ids), j="egreedy.01", value=sapply(adsetData[which(adsetData$id %in% ids), r], getEpsilonGreedyWeight, e=epsilon01))
-		# set(adsetData, i=which(adsetData$id %in% ids), j="decreasing.egreedy.1", value=sapply(adsetData[which(adsetData$id %in% ids), r], getDecreasingEpsilonGreedyWeight, c=c1))
-		# set(adsetData, i=which(adsetData$id %in% ids), j="decreasing.egreedy.10", value=sapply(adsetData[which(adsetData$id %in% ids), r], getDecreasingEpsilonGreedyWeight, c=c10))
 
 		adsetData[id %in% c(adsets.old$id), `:=` (
 			optimal = sapply(r, getOptimalWeight),
@@ -450,6 +532,11 @@ countTime <- function() {
 	system.time({
 		samples[, max_impression := lapply(impressions, function(x) max(x))]
 	})
+}
+
+helpers <- function() {
+	# Number of unique dates in each campaign
+	data.adsets[, length(unique(date)), by= .(group_id)]
 }
 
 #Testing
