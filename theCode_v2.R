@@ -280,48 +280,44 @@ getRunningDays <- function(data) {
 # output <- calculateReturns(data.adsets)
 # output <- calculateReturns(data.adsets[group_id == "5527905fd1a561f72d8b456c"])
 # output[group_id=="55fbd93458e7ab426a8b4567"][day==303]
-calculateReturns <- function (dataTable) {
+
+calculateReturns2 <- function (dataTable) {
 	data <- copy(dataTable)
-	setkey(data, group_id, day, id)
-	days <- max(data$day)
+	# setkey(data, group_id, day.campaign, id)
+	days <- max(data$day.campaign)
 	budget <- 100
 	epsilon05 = 0.5
 	epsilon01 = 0.1
 	c1 = 1
 	c10 = 10
 
+	cat("Adding default columns \n")
 	#As default, set equal allocations for all ad sets
-	data[, equal := 1/.N, by=.(group_id, day)]
+	data[, equal := 1/.N, by=.(group_id, day.campaign)]
 
 	#Set columns needed later on
-	# data[, r_avrg := mean(.SD[id == id & day < day]$r), by=.(id), .SDcols=c("id", "day", "r")]
-	# data[, r_avrg := mean(.SD[id == id]$r), by=.(id), .SDcols=c("id", "day", "r")]
-	# data[, r_avrg := sapply(.SD[1:.I]$r, mean), by=.(id), .SDcols=c("id", "day", "r")]
-	# data[, r_avrg := sapply(.SD$r, roll_meanr, n=.I), by=.(id), .SDcols=c("id", "day", "r")]
-	setkey(data, id, date)
-	data[, r_avrg := roll_meanr(.SD$r, .I), by=.(id), .SDcols=c("id", "day", "r")]
-	print(data)
-	return (data)
+	setkey(data, id, day.adset)
+	getRetrunHistory <- function(data, day) {
+		return(data[1:day])
+	}
+	data[, r_history := .(mapply(getRetrunHistory, .(.SD$r), day.adset)), by=.(id)]
+	data$r_avrg = sapply(data$r_history, mean)
+	cat("\u2713\n")
 
 	cat("Calculating returns with algorithms \n")
 	for(i in 1:days) { #two campaign have 303 days
-		history <- data[day < i]
-		setkey(history, group_id, day, id)
-
-		
-
 		data[
-			day == i & id %in% history$id, 
+			day.campaign == i & id %in% history$id, 
 			optimal := mapply(getOptimalWeight, .SD$r, .SD[, max(r)], .SD[, sum(equal)]), 
 			by=.(group_id), 
 			.SDcols=c("id", "r", "equal")
 		]
 
 		data[
-			day == i & id %in% history$id, 
-			greedy := mapply(getGreedyWeight, .(.SD), .(history), .SD[, sum(equal)]), 
+			day.campaign == i & id %in% history$id, 
+			greedy := mapply(getGreedyWeight2, .(.SD), .SD$r_avrg, sum(.SD$equal)), 
 			by=.(group_id), 
-			.SDcols=c("id", "r", "equal")
+			.SDcols=c("id", "r_avrg", "equal")
 		]
 		
 		
@@ -345,8 +341,7 @@ getOptimalWeight <- function(returns, max, allocableWeight) {
 	}))
 }
 
-getGreedyWeight <- function(adsets, history, allocableWeight) {
-	averages <- history[id %in% adsets$id, .(avrg = mean(r)), by=id]$avrg
+getGreedyWeight <- function(adsets, averages, allocableWeight) {
 	max <- max(averages)
 	getOptimalWeight(averages, max, allocableWeight)
 }
