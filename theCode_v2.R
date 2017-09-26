@@ -281,7 +281,14 @@ getRunningDays <- function(data) {
 # output <- calculateReturns(data.adsets[group_id == "5527905fd1a561f72d8b456c"])
 # output[group_id=="55fbd93458e7ab426a8b4567"][day==303]
 
-calculateReturns2 <- function (dataTable) {
+# System times:
+# With optimal only: 26.951
+# With greedy algorithms: 190.895
+# With UCB: 5062.102
+
+# Two first days:
+# With all: 95.900
+calculateReturns <- function (dataTable) {
 	data <- copy(dataTable)
 	# setkey(data, group_id, day.campaign, id)
 	days <- max(data$day.campaign)
@@ -291,37 +298,101 @@ calculateReturns2 <- function (dataTable) {
 	c1 = 1
 	c10 = 10
 
-	cat("Adding default columns \n")
+	cat("Adding default columns... ")
 	#As default, set equal allocations for all ad sets
 	data[, equal := 1/.N, by=.(group_id, day.campaign)]
+	data$ucb = data$equal
+	data$spend.campaign = budget * data$day.campaign
+	data$spend.ucb = data$equal * budget
 
-	#Set columns needed later on
+	# Set columns needed later on
+	# Does it fast up things if max columns where here too? or allocable weight
 	setkey(data, id, day.adset)
 	getRetrunHistory <- function(data, day) {
 		return(data[1:day])
 	}
 	data[, r_history := .(mapply(getRetrunHistory, .(.SD$r), day.adset)), by=.(id)]
 	data$r_avrg = sapply(data$r_history, mean)
+	data$ln = sapply(data$spend.campaign, log)
 	cat("\u2713\n")
 
 	cat("Calculating returns with algorithms \n")
-	for(i in 1:days) { #two campaign have 303 days
+	setkey(data, group_id, day.campaign, id)
+	for(i in 1:2) { #two campaign have 303 days
 		data[
-			day.campaign == i & id %in% history$id, 
-			optimal := mapply(getOptimalWeight, .SD$r, .SD[, max(r)], .SD[, sum(equal)]), 
+			day.campaign == i & day.adset > 0, 
+			optimal := mapply(getGreedyWeight, .(.SD$r), max(.SD$r), sum(.SD$equal)), 
 			by=.(group_id), 
 			.SDcols=c("id", "r", "equal")
 		]
 
+		#Greedy algorithms -------------
+
 		data[
-			day.campaign == i & id %in% history$id, 
-			greedy := mapply(getGreedyWeight2, .(.SD), .SD$r_avrg, sum(.SD$equal)), 
+			day.campaign == i & day.adset > 0, 
+			greedy := mapply(getGreedyWeight, .(.SD$r_avrg), max(.SD$r_avrg), sum(.SD$equal)), 
 			by=.(group_id), 
 			.SDcols=c("id", "r_avrg", "equal")
 		]
-		
-		
-		# data[day == i, allocation := mapply(getAllocation, .(.SD), .(history)), by=.(group_id), .SDcols=c("id", "r")]
+
+		data[
+			day.campaign == i & day.adset > 0, 
+			egreedy.05 := mapply(getEpsilonGreedyWeight, .(.SD$r_avrg), max(.SD$r), sum(.SD$equal), epsilon05), 
+			by=.(group_id), 
+			.SDcols=c("id", "r_avrg", "equal")
+		]
+
+		data[
+			day.campaign == i & day.adset > 0, 
+			egreedy.01 := mapply(getEpsilonGreedyWeight, .(.SD$r_avrg), max(.SD$r), sum(.SD$equal), epsilon01), 
+			by=.(group_id), 
+			.SDcols=c("id", "r_avrg", "equal")
+		]
+
+		data[
+			day.campaign == i & day.adset > 0, 
+			decreasing.egreedy.01 := mapply(
+				getEpsilonGreedyWeight, 
+				.(.SD$r_avrg), 
+				max(.SD$r), 
+				sum(.SD$equal), 
+				min(c1/max(.SD$day.campaign), 1)
+			), 
+			by=.(group_id), 
+			.SDcols=c("id", "r_avrg", "equal", "day.campaign")
+		]
+
+		data[
+			day.campaign == i & day.adset > 0, 
+			decreasing.egreedy.10 := mapply(
+				getEpsilonGreedyWeight, 
+				.(.SD$r_avrg), 
+				max(.SD$r), 
+				sum(.SD$equal), 
+				min(c10/max(.SD$day.campaign), 1)
+			), 
+			by=.(group_id), 
+			.SDcols=c("id", "r_avrg", "equal", "day.campaign")
+		]
+
+		# UCB Algorithms -------------------------
+	
+		data$temp = (2 * data$ln)/data$spend.ucb
+		data$ci = sapply(data$temp, sqrt)
+		data$ub = data$r_avrg + data$ci
+		data$lb = data$r_avrg - data$ci
+		data[, surviving := sapply(ub, function (ub) {
+			if (ub > max(.SD$lb)) TRUE else FALSE
+		}), by=.(group_id, date)]
+
+		data[
+			day.campaign == i & day.adset > 0, 
+			ucb := mapply(getUCBWeight, .(.SD), sum(.SD$equal)), 
+			by=.(group_id), 
+			.SDcols=c("id", "surviving", "equal")
+		]
+
+		data$spend.ucb = data$spend.ucb + data$ucb * budget
 		
 		#Log progress to console
 		if(i %% 100  == 0 ) {
@@ -331,36 +402,43 @@ calculateReturns2 <- function (dataTable) {
 		}
 	}
 
+	setkey(data, group_id, day.campaign, id)
+
 	cat("(100%) \n")
+
+	#Clean up table
+	data[, `:=`(
+		ln = NULL,
+		temp = NULL,
+		ci = NULL,
+		ub = NULL,
+		lb = NULL,
+		surviving = NULL,
+		spend.ucb = NULL
+	)]
+	print(data)
 	return (data)
 }
 
-getOptimalWeight <- function(returns, max, allocableWeight) {
+getWeights <- function(returns, condition, matchWeight, noMatchWeight) {
 	return (sapply(returns, function(r) {
-		return (if(r==max) allocableWeight else 0)
+		return (if(r==condition) matchWeight else noMatchWeight)
 	}))
 }
 
-getGreedyWeight <- function(adsets, averages, allocableWeight) {
-	max <- max(averages)
-	getOptimalWeight(averages, max, allocableWeight)
+getGreedyWeight <- function(returns, max, allocableWeight) {
+	return (getWeights(returns, max, allocableWeight, 0))
 }
 
-getEpsilonGreedyWeight <- function(r_avrg, epsilon) {
-	exploration.weight = epsilon * allocableWeight / (n)
+getEpsilonGreedyWeight <- function(averages, max, allocableWeight, epsilon) {
+	exploration.weight = epsilon * (allocableWeight / length(averages))
 	exploitation.weight = {1 - epsilon} * allocableWeight + exploration.weight
-	return (if(r_avrg==max_avrg) exploitation.weight else exploration.weight)
+	return (getWeights(averages, max, exploitation.weight, exploration.weight))
 }
 
-getDecreasingEpsilonGreedyWeight <- function(r_avrg, constant) {
-	epsilon <- min(constant/t, 1)
-	return (getEpsilonGreedyWeight(r_avrg, epsilon))
-}
-
-getAllocation <- function (adsets, history) {
-	print(history)
-	print(adsets)
-	return (adsets$r)
+getUCBWeight <- function(adsets, allocableWeight) {
+	equalWeight = allocableWeight/adsets[surviving == TRUE, .N]
+	return (getWeights(adsets$surviving, TRUE, equalWeight, 0))
 }
 
 #----------------------------------------------------
