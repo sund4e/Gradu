@@ -337,19 +337,20 @@ calculateReturns <- function (dataTable) {
 	cat("\u2713\n")
 
 	data[, ucb := w.equal]
-	setkey(data, day.campaign)
+	setkey(data, day.campaign, day.adset)
 
 	cat("Calculating returns for UCB... \n")
 	for(i in 1:days) { #two campaign have 303 days
+		days.previous = seq_len(i)
 		data[.(i), ucb := getUCBWeight(.SD)]
-		data[, spend.adset := getAdsetSpend(.SD, 'ucb')]
+		data[days.previous, spend.adset := getAdsetSpend(.SD, 'ucb')]
 		
 		#Log progress to console
-		if(i %% 100  == 0 ) {
-			cat("(", ceiling(i/days * 100), "% ) \n", sep="");
-		} else {
-			cat(".")
-		}
+		# if(i %% 100  == 0 ) {
+		# 	cat("(", ceiling(i/days * 100), "% ) \n", sep="");
+		# } else {
+		# 	cat(".")
+		# }
 	}
 
 	setkey(data, day.campaign)
@@ -434,7 +435,7 @@ getDecreasingEpsilonGreedyWeight <- function(data, constant) {
 getUCBWeight <- function(data) {
 	temp <- copy(data)
 	temp[, ci := 0]
-	temp[!.(1), ci := sqrt((2 * ln.spend)/spend.adset)]
+	temp[day.adset != 1, ci := sqrt((2 * ln.spend)/spend.adset)]
 	temp[, `:=` (
 		ucb = r.avrg + ci,
 		lcb = r.avrg - ci
@@ -444,7 +445,7 @@ getUCBWeight <- function(data) {
 	temp[surviving == TRUE, n.surviving := .N, by=.(group_id, day.campaign)]
 	temp[surviving == TRUE, weight := w.allocable/n.surviving]
 	temp[surviving == FALSE, weight := 0]
-	temp[.(1), weight := w.equal]
+	temp[day.adset == 1, weight := w.equal]
 	return (temp[, weight])
 }
 
