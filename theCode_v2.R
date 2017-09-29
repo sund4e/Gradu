@@ -12,6 +12,7 @@ require(rmongodb)
 require(rlist)
 require(rbenchmark)
 require(RcppRoll)
+require(cumstats)
 
 getData <- function(){
 	# create a connection 
@@ -323,7 +324,10 @@ calculateReturns <- function (dataTable) {
 
 	data[, budget := budget]
 	data[, ln.spend := log(budget * (day.campaign-1))]
-	data[, spend.adset := getAdsetSpend(.SD, 'w.equal')]
+	data[, spend.ucb := getAdsetSpend(.SD, 'w.equal')]
+	data[, spend.ucb.tuned := spend.ucb]
+	data[, ln.time := log(day.campaign)]
+	data[, r.variance := getReturnVariance(.SD)]
 	cat("\u2713\n")
 
 	cat("Calculating returns for greedy algorithms... ")
@@ -343,14 +347,16 @@ calculateReturns <- function (dataTable) {
 	for(i in 1:days) { #two campaign have 303 days
 		days.previous = seq_len(i)
 		data[.(i), ucb := getUCBWeight(.SD)]
-		data[days.previous, spend.adset := getAdsetSpend(.SD, 'ucb')]
+		data[.(i), ucb.tuned := getUCBTunedWeight(.SD)]
+		data[days.previous, spend.ucb := getAdsetSpend(.SD, 'ucb')]
+		data[days.previous, spend.ucb.tuned := getAdsetSpend(.SD, 'ucb.tuned')]
 		
-		#Log progress to console
-		# if(i %% 100  == 0 ) {
-		# 	cat("(", ceiling(i/days * 100), "% ) \n", sep="");
-		# } else {
-		# 	cat(".")
-		# }
+		# Log progress to console
+		if(i %% 100  == 0 ) {
+			cat("(", floor(i/days * 100), "% ) \n", sep="");
+		} else {
+			cat(".")
+		}
 	}
 
 	setkey(data, day.campaign)
@@ -387,12 +393,21 @@ getMaxForDay <- function (data, column) {
 }
 
 # Get the maximum adset return for each day in each campaign (ignoring new adsets)
-# Assumes that day.adset is set as key
+# Assumes that day.adset is set as key (adset observaitons sorted by day)
 getAdsetSpend <- function (data, weightColumn) {
   temp <- copy(data)
   temp[, spend := get(weightColumn) * budget]
   temp[, spend.cumulative := cumsum(spend), by=.(id)]
   return(temp[, spend.cumulative - spend])
+}
+
+# Get the maximum adset return for each day in each campaign (ignoring new adsets)
+# Assumes that day.adset is set as key
+getReturnVariance <- function (data, weightColumn) {
+  temp <- copy(data)
+  temp[, variance := cumvar(r), by=.(id)]
+  temp[, variance.lag := shift(variance, 1), by=.(id)]
+  return(temp[, variance.lag])
 }
 
 #Allocation algorithms ------------------
@@ -432,20 +447,44 @@ getDecreasingEpsilonGreedyWeight <- function(data, constant) {
 	return (temp[, weight])
 }
 
-getUCBWeight <- function(data) {
-	temp <- copy(data)
-	temp[, ci := 0]
-	temp[day.adset != 1, ci := sqrt((2 * ln.spend)/spend.adset)]
-	temp[, `:=` (
+addUCBWeight <- function(data) {
+	data[, `:=` (
 		ucb = r.avrg + ci,
 		lcb = r.avrg - ci
 	)]
-	temp[, lcb.max := max(lcb), by=.(group_id, day.campaign)]
-	temp[, surviving := ucb > lcb.max]
-	temp[surviving == TRUE, n.surviving := .N, by=.(group_id, day.campaign)]
-	temp[surviving == TRUE, weight := w.allocable/n.surviving]
-	temp[surviving == FALSE, weight := 0]
-	temp[day.adset == 1, weight := w.equal]
+	data[, lcb.max := max(lcb), by=.(group_id, day.campaign)]
+	data[, surviving := ucb > lcb.max]
+	data[surviving == TRUE, n.surviving := .N, by=.(group_id, day.campaign)]
+	data[surviving == TRUE, weight := w.allocable/n.surviving]
+	data[surviving == FALSE, weight := 0]
+	data[day.adset == 1, weight := w.equal]
+}
+
+getUCBWeight <- function(data) {
+	temp <- copy(data)
+	temp[, ci := 0]
+	temp[day.adset != 1, ci := sqrt((2 * ln.spend)/spend.ucb)]
+	addUCBWeight(temp)
+	return (temp[, weight])
+}
+
+getTunedConfidenceInterval <- function(data) {
+	temp <- copy(data)
+	temp[, ci.variance := sqrt((2 * ln.spend)/spend.ucb.tuned)]
+	temp[, V := r.variance + ci.variance]
+	temp[, multiplier := 1/4]
+	temp[V < multiplier, multiplier := V]
+	temp[, ci := sqrt((ln.time/spend.ucb.tuned)*multiplier)]
+	return(data[, ci])
+}
+
+#output[group_id=="55fbd93458e7ab426a8b4567"]
+getUCBTunedWeight <- function(data) {
+	temp <- copy(data)
+	temp[, ci := 0]
+	temp[day.adset > 2, ci := getTunedConfidenceInterval(.SD)]
+	addUCBWeight(temp)
+	temp[day.adset == 2, weight := w.equal]
 	return (temp[, weight])
 }
 
