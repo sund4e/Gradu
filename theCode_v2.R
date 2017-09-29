@@ -108,7 +108,7 @@ getTestData <- function(data.campaigns) {
 	return(test)
 }
 
-#--------------------
+#Data generation--------------------
 
 getSavedData <- function () {
 	#uncrunched data saved with saveRDS(data, file="data.rds")
@@ -173,7 +173,7 @@ getRewardDistributions <- function(dataTable) {
 	return (data.combined)
 }
 
-#CREATING SAMPLED REWARDS-----------------------
+#Sample creation-----------------------
 # Converts data on campaign level with r column containing data for each ad set
 # Columns for adsetData: 
 # r = return for the date
@@ -246,8 +246,7 @@ addEqualAllocation <- function(dataTable) {
 	return(data)
 }
 
-#------------------------------------------------
-#ADSETS
+#Simulation ----------------------------------------------
 getDay <- function(date, campaign.rows) {
 	campaign.rows[date == date, 1:.N, by=date]
 }
@@ -312,6 +311,8 @@ calculateReturns <- function (dataTable) {
 	epsilon01 = 0.1
 	c1 = 1
 	c10 = 10
+	tau25 = 25
+	tau50 = 50
 
 	cat("Adding default columns... ")
 	setkey(data, day.adset)
@@ -321,13 +322,19 @@ calculateReturns <- function (dataTable) {
 	data[, w.allocable := getAllocableWeight(.SD)]
 	data[, r.max := getMaxForDay(.SD, 'r')]
 	data[, r.avrg.max := getMaxForDay(.SD, 'r.avrg')]
-
+	data[, spend.equal := getAdsetSpend(.SD, 'w.equal')]
 	data[, budget := budget]
+
+	#Init columns for UCB
 	data[, ln.spend := log(budget * (day.campaign-1))]
-	data[, spend.ucb := getAdsetSpend(.SD, 'w.equal')]
+	data[, spend.ucb := spend.equal]
 	data[, spend.ucb.tuned := spend.ucb]
 	data[, ln.time := log(day.campaign)]
 	data[, r.variance := getReturnVariance(.SD)]
+
+	#Init columns for Thopson Sampling
+	data[, r.count := 0]
+	data[, spend.thopson := spend.equal]
 	cat("\u2713\n")
 
 	cat("Calculating returns for greedy algorithms... ")
@@ -340,16 +347,28 @@ calculateReturns <- function (dataTable) {
 	data[, egreedy.decreasing.10 := getDecreasingEpsilonGreedyWeight(.SD, c10)]
 	cat("\u2713\n")
 
+	cat("Calculating returns for probability matching... ")
+	setkey(data, day.adset)
+	data[, softmax.25 := getSoftMaxWeight(.SD, tau25)]
+	data[, softmax.50 := getSoftMaxWeight(.SD, tau50)]
+	data[, softmix.25 := getSoftMixWeight(.SD, tau25)]
+	data[, softmix.50 := getSoftMixWeight(.SD, tau50)]
+	cat("\u2713\n")
+
+	cat("Calculating returns for UCB and Thompson... \n")
 	data[, ucb := w.equal]
 	setkey(data, day.campaign, day.adset)
-
-	cat("Calculating returns for UCB... \n")
-	for(i in 1:days) { #two campaign have 303 days
+	for(i in 1:days) {
 		days.previous = seq_len(i)
+
+		#UCB
 		data[.(i), ucb := getUCBWeight(.SD)]
 		data[.(i), ucb.tuned := getUCBTunedWeight(.SD)]
 		data[days.previous, spend.ucb := getAdsetSpend(.SD, 'ucb')]
 		data[days.previous, spend.ucb.tuned := getAdsetSpend(.SD, 'ucb.tuned')]
+
+		#Thompson
+		data[.(i), ucb := getUCBWeight(.SD)]
 		
 		# Log progress to console
 		if(i %% 100  == 0 ) {
@@ -403,11 +422,19 @@ getAdsetSpend <- function (data, weightColumn) {
 
 # Get the maximum adset return for each day in each campaign (ignoring new adsets)
 # Assumes that day.adset is set as key
-getReturnVariance <- function (data, weightColumn) {
+getReturnVariance <- function (data) {
   temp <- copy(data)
   temp[, variance := cumvar(r), by=.(id)]
   temp[, variance.lag := shift(variance, 1), by=.(id)]
   return(temp[, variance.lag])
+}
+
+getRewardCount <- function(data, weightColumn, spendColumn) {
+	# temp <- copy(data)
+  # temp[, r.count := get(weightColumn) * get(spendColumn) ]
+  # temp[, spend.cumulative := cumsum(spend), by=.(id)]
+  # return(temp[, spend.cumulative - spend])
+
 }
 
 #Allocation algorithms ------------------
@@ -447,24 +474,46 @@ getDecreasingEpsilonGreedyWeight <- function(data, constant) {
 	return (temp[, weight])
 }
 
-addUCBWeight <- function(data) {
-	data[, `:=` (
+getProbabilityWeights <- function(data) {
+	data[, exp := exp(r.avrg/temperature)]
+	data[, exp.sum := sum(exp), by=.(group_id, day.campaign)]
+  data[, weight := exp/exp.sum]
+  data[.(1), weight := w.equal]
+	return(data[, weight])
+}
+
+getSoftMaxWeight <- function(data, tau) {
+	temp <- copy(data)
+  temp[, temperature := tau]
+  return(getProbabilityWeights(temp))
+}
+
+getSoftMixWeight <- function(data, tau) {
+	temp <- copy(data)
+	temp[, temperature := tau * log(day.campaign)/day.campaign]
+  return(getProbabilityWeights(temp))
+}
+
+getWeightWithCI <- function(data) {
+	temp <- copy(data)
+	temp[, `:=` (
 		ucb = r.avrg + ci,
 		lcb = r.avrg - ci
 	)]
-	data[, lcb.max := max(lcb), by=.(group_id, day.campaign)]
-	data[, surviving := ucb > lcb.max]
-	data[surviving == TRUE, n.surviving := .N, by=.(group_id, day.campaign)]
-	data[surviving == TRUE, weight := w.allocable/n.surviving]
-	data[surviving == FALSE, weight := 0]
-	data[day.adset == 1, weight := w.equal]
+	temp[, lcb.max := max(lcb), by=.(group_id, day.campaign)]
+	temp[, surviving := ucb > lcb.max]
+	temp[surviving == TRUE, n.surviving := .N, by=.(group_id, day.campaign)]
+	temp[surviving == TRUE, weight := w.allocable/n.surviving]
+	temp[surviving == FALSE, weight := 0]
+	return (temp[, weight])
 }
 
 getUCBWeight <- function(data) {
 	temp <- copy(data)
 	temp[, ci := 0]
 	temp[day.adset != 1, ci := sqrt((2 * ln.spend)/spend.ucb)]
-	addUCBWeight(temp)
+	temp[, weight := getWeightWithCI(.SD)]
+	temp[day.adset == 1, weight := w.equal]
 	return (temp[, weight])
 }
 
@@ -475,7 +524,7 @@ getTunedConfidenceInterval <- function(data) {
 	temp[, multiplier := 1/4]
 	temp[V < multiplier, multiplier := V]
 	temp[, ci := sqrt((ln.time/spend.ucb.tuned)*multiplier)]
-	return(data[, ci])
+	return(temp[, ci])
 }
 
 #output[group_id=="55fbd93458e7ab426a8b4567"]
@@ -483,12 +532,12 @@ getUCBTunedWeight <- function(data) {
 	temp <- copy(data)
 	temp[, ci := 0]
 	temp[day.adset > 2, ci := getTunedConfidenceInterval(.SD)]
-	addUCBWeight(temp)
-	temp[day.adset == 2, weight := w.equal]
+	temp[, weight := getWeightWithCI(.SD)]
+	temp[day.adset < 3, weight := w.equal]
 	return (temp[, weight])
 }
 
-#----------------------------------------------------
+#Some random crap----------------------------------------------------
 
 #Testing
 testing <- function (data.adsets, test) {
