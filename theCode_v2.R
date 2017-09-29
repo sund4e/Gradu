@@ -81,17 +81,6 @@ getData <- function(){
 runCode <- function() {
 	data <- getSavedData()
 	data.distributions <- getRewardDistributions(data)
-	data.adsets <- data[, .(optimal = 0), by = .(id, group_id)] #for temp table in getReturnForAlgorthm
-
-	col <- "impressioins"
-	data.campaigns <- getSimulatedCampaigns(data.distributions, "impressions")
-	# save(data.campaigns, file = "data030917.RData")
-	# load("data030917.RData")
-
-	data.optimal <- getReturns(data.campaigns, data.adsets)
-
-	#Adset test-----------------
-	spendData <- data[, .(optimal = 0), by = .(id, group_id)]
 	data.adsets <- getSimulatedAdsets(data.distributions, "impressions")
 
 	#----------------------------
@@ -174,17 +163,9 @@ getRewardDistributions <- function(dataTable) {
 }
 
 #Sample creation-----------------------
-# Converts data on campaign level with r column containing data for each ad set
-# Columns for adsetData: 
-# r = return for the date
-# r_history = returns before the date
-# weight = initial weight column with equal allocations
-
-getSimulatedCampaigns <- function(data, conversion_column) {
+getSimulatedAdsets <- function(data, conversion_column) {
 	data.returns <- generateSamples(data, conversion_column)
-	data.history <- addHistoryColumn(data.returns)
-	data.campaigns <- getCampaignData(data.history)
-	data.ready <- getEqualAllocation(data.campaigns)
+	data.ready <- getRunningDays(data.returns)
 	return (data.ready)
 }
 
@@ -198,65 +179,6 @@ generateSamples <- function (data, column) {
 
 sampleObservations	<- function(observations) {
 	sample(observations, size = 1, replace=TRUE)
-}
-
-addHistoryColumn <- function(adsetData) {
-	cat("Adding history column for samples... ")
-	data <- copy(adsetData)
-	setkey(data, date)
-	data[, 
-		r_history := list(mapply(getHistory, .(.SD), date)), 
-		by=.(id), 
-		.SDcols=c("r", "id", "date")
-	]
-	cat("\u2713\n")
-	return (data)
-}
-
-getHistory <- function(adsetData, day) {
-	return (adsetData[day > date, r])
-}
-
-getCampaignData <- function(adsetData) {
-	cat("Creating rows for campaigns... ")
-	campaigns <- adsetData[, .(
-			r = .(.SD)
-		),
-		by=.(group_id, date), 
-		.SDcols=c("id", "r", "r_history")
-	]
-	cat("\u2713\n")
-	return(campaigns)
-}
-
-getEqualAllocation <- function(campaignData) {
-	cat("Adding starting allocations... ")
-	data <- copy(campaignData)
-	setkey(data, group_id, date)
-	data[, r := .(lapply(r, addEqualAllocation))]
-	cat("\u2713\n")
-	return(data)
-}
-
-# Takes in dataTable with each row representing an ad set
-addEqualAllocation <- function(dataTable) {
-	data <- copy(dataTable)
-	w <- 1/data[, .N]
-	data[, weight := w]
-	return(data)
-}
-
-#Simulation ----------------------------------------------
-getDay <- function(date, campaign.rows) {
-	campaign.rows[date == date, 1:.N, by=date]
-}
-
-# data.returns <- generateSamples(data.distributions, "impressions")
-# data.ready <- getRunningDays(data.returns)
-getSimulatedAdsets <- function(data, conversion_column) {
-	data.returns <- generateSamples(data, conversion_column)
-	data.ready <- getRunningDays(data.returns)
-	return (data.ready)
 }
 
 getRunningDays <- function(data) {
@@ -275,6 +197,8 @@ getRunningDays <- function(data) {
 	cat("\u2713\n")
 	return (data.combined)
 }
+
+#Simulation ----------------------------------------------
 
 # data.adsets <- getSimulatedAdsets(data.distributions, "impressions")
 # output <- calculateReturns(data.adsets)
@@ -322,19 +246,19 @@ calculateReturns <- function (dataTable) {
 	data[, w.allocable := getAllocableWeight(.SD)]
 	data[, r.max := getMaxForDay(.SD, 'r')]
 	data[, r.avrg.max := getMaxForDay(.SD, 'r.avrg')]
-	data[, spend.equal := getAdsetSpend(.SD, 'w.equal')]
 	data[, budget := budget]
+	data[, spend.equal := getAdsetSpend(.SD, 'w.equal')]
 
 	#Init columns for UCB
 	data[, ln.spend := log(budget * (day.campaign-1))]
-	data[, spend.ucb := spend.equal]
-	data[, spend.ucb.tuned := spend.ucb]
 	data[, ln.time := log(day.campaign)]
 	data[, r.variance := getReturnVariance(.SD)]
+	data[, spend.ucb := 0]
+	data[, spend.ucb.tuned := 0]
 
 	#Init columns for Thopson Sampling
+	data[, spend.thompson := 0]
 	data[, r.count := 0]
-	data[, spend.thopson := spend.equal]
 	cat("\u2713\n")
 
 	cat("Calculating returns for greedy algorithms... ")
@@ -357,18 +281,69 @@ calculateReturns <- function (dataTable) {
 
 	cat("Calculating returns for UCB and Thompson... \n")
 	data[, ucb := w.equal]
-	setkey(data, day.campaign, day.adset)
+	data[, ucb.tuned := w.equal]
+	data[, thompson := w.equal]
 	for(i in 1:days) {
 		days.previous = seq_len(i)
-
-		#UCB
+		setkey(data, day.campaign, day.adset)
 		data[.(i), ucb := getUCBWeight(.SD)]
 		data[.(i), ucb.tuned := getUCBTunedWeight(.SD)]
-		data[days.previous, spend.ucb := getAdsetSpend(.SD, 'ucb')]
-		data[days.previous, spend.ucb.tuned := getAdsetSpend(.SD, 'ucb.tuned')]
+		data[.(i), thompson := getThompsonWeight(.SD)]
 
-		#Thompson
-		data[.(i), ucb := getUCBWeight(.SD)]
+		#Update running numbers
+		# setkey(data, id, day.adset)
+		# data[, `:=` (
+		# 	temp.ucb = sum(spend.ucb),
+		# 	temp.ucb.tuned = sum(spend.ucb.tuned),
+		# 	temp.thompson = sum(spend.thompson),
+		# 	temp.r.count = sum(r.count)
+		# ), by = .(id)]
+
+		# setkey(data, day.campaign, day.adset)
+		# data[.(i), `:=` (
+		# 	spend.ucb = temp.ucb + ucb * budget,
+		# 	spend.ucb.tuned = temp.ucb.tuned + ucb.tuned * budget,
+		# 	spend.thompson = temp.thompson + thompson * budget,
+		# 	r.count = temp.r.count + r * (thompson * budget)
+		# )]
+
+		#----
+		# setkey(data, id, day.adset)
+		# data[, temp.ucb := sum(spend.ucb), by = .(id)]
+		# data[, temp.ucb.tuned := sum(spend.ucb.tuned), by = .(id)]
+		# data[, temp.thompson := sum(spend.thompson), by = .(id)]
+		# data[, temp.r.count := sum(r.count), by = .(id)]
+
+		# setkey(data, day.campaign, day.adset)
+		# data[.(i), spend.ucb := temp.ucb + ucb * budget]
+		# data[.(i), spend.ucb.tuned := temp.ucb.tuned + ucb.tuned * budget]
+		# data[.(i), spend.thompson := temp.thompson + thompson * budget]
+		# data[.(i), r.count := temp.r.count + r * (thompson * budget)]
+
+		##---
+
+		data[.(i), `:=` (
+			spend.ucb = spend.ucb + ucb * budget,
+			spend.ucb.tuned = spend.ucb.tuned + ucb.tuned * budget,
+			spend.thompson = spend.thompson + thompson * budget,
+			r.count = r.count + r * (thompson * budget)
+		)]
+		cols = c("spend.ucb", "spend.ucb.tuned", "spend.thompson", "r.count")
+		data[, (cols) := shift(.SD, 1), .SDcols=cols, by = .(id)]
+
+		#----
+
+		# data[, `:=` (
+		# 	spend.ucb = sum(ucb)/.N * budget,
+		# 	spend.ucb.tuned = sum(ucb.tuned)/.N * budget,
+		# 	spend.thompson = sum(thompson)/.N * budget 
+		# ), by=.(id)]
+		# # data[, r.count := sum(r)/.N * spend.thompson, by=.(id)]
+		# data[!.(i), `:=` (
+		# 	spend.ucb = 0,
+		# 	spend.ucb.tuned = 0,
+		# 	spend.thompson = 0 
+		# )]
 		
 		# Log progress to console
 		if(i %% 100  == 0 ) {
@@ -429,8 +404,18 @@ getReturnVariance <- function (data) {
   return(temp[, variance.lag])
 }
 
-getRewardCount <- function(data, weightColumn, spendColumn) {
+getNextValues <- function(data, columns) {
 	# temp <- copy(data)
+	# tempcols = paste("temp", cols, sep="_")
+	# temp[, (tempcols) := sum(cols), by =.(id)]
+	# temp[, (cols) := ]
+
+	# 	data[.(i), `:=` (
+	# 		spend.ucb = spend.ucb + ucb * budget,
+	# 		spend.ucb.tuned = spend.ucb.tuned + ucb.tuned * budget,
+	# 		spend.thompson = spend.thompson + thompson * budget,
+	# 		r.count = r.count + r * (thompson * budget)
+	# 	)]
   # temp[, r.count := get(weightColumn) * get(spendColumn) ]
   # temp[, spend.cumulative := cumsum(spend), by=.(id)]
   # return(temp[, spend.cumulative - spend])
@@ -527,13 +512,26 @@ getTunedConfidenceInterval <- function(data) {
 	return(temp[, ci])
 }
 
-#output[group_id=="55fbd93458e7ab426a8b4567"]
 getUCBTunedWeight <- function(data) {
 	temp <- copy(data)
 	temp[, ci := 0]
 	temp[day.adset > 2, ci := getTunedConfidenceInterval(.SD)]
 	temp[, weight := getWeightWithCI(.SD)]
 	temp[day.adset < 3, weight := w.equal]
+	return (temp[, weight])
+}
+
+getThompsonWeight <- function(data) {
+	temp <- copy(data)
+	rep <- 10
+	temp[, best.count := 0]
+	for(i in 1:rep) {
+		temp[, r.sample := rgamma(r.count, spend.thompson)]
+		temp[, max := max(r.sample), by=.(group_id, day.campaign)]
+		temp[r.sample == max, best.count := best.count + 1]
+	}
+	temp[, weight := best.count / rep]
+	temp[day.adset == 1, weight := w.equal]
 	return (temp[, weight])
 }
 
