@@ -89,6 +89,9 @@ runCode <- function() {
 	data.sequential <- getSequentialData(data, "impressions_cr")
 	data.returns <- calculateReturns(data.sequential)
 	data.result <- getRegret(data.returns)
+	data.result.avrg = data.result[, lapply(.SD, mean), by=group_id]
+
+	summary(data.result)
 	
 	
 
@@ -102,7 +105,16 @@ runCode <- function() {
 #system.time({output <- calculateReturns(data.adsets)})
 #data.campaigns <- getRegret(data.output)
 
-	#Negative greedy: 562a01de58e7abdf308b456a 
+	#Investigate
+	# data.returns[group_id == "560bb3cff789b8e5698b4567"][day.campaign == 124]
+	# UCBs and Thompson not working
+	# Fix greedy algorithm = don't add to average unless budget allocated
+	# Would Beta distribution work better for thompson
+
+	#TO TEST:
+	# no thompson sampling as negative regret
+	# no UCB for campaign is 0 
+	# no softmix or max 0
 
 }
 
@@ -137,20 +149,17 @@ crunchData <- function(dataframe) {
 	data <- data[spend > 100] #Filter out rows that have spend less than 100
 	data <- data[bid > 0] #Filter out rows that have zero/NA in bid
 	setkey(data, group_id, date, spend, impressions, clicks, conversions)
-	data <- unique(data) #Remove duplicate adsets with still unique ids (some random fuckery in db) 
+	data <- unique(data) #Remove duplicate adsets with still unique ids (some random fuckery in db)
 	data <- data[, id:=paste(adset_id, bid, sep="")] #Create unique ids for adsets having different bids
+	setkey(data, id, group_id, date)
+	data <- unique(data) # Remove all duplicate keys (some of the data is messed up and different ad sets have same ids)
 	data <- data[, adsets_in_campaign:=.N, by=.(group_id, date)][adsets_in_campaign > 1] #Filter out day rows when campaign has only one ad set
 	data <- data[, days_of_data:=.N, by=id][days_of_data >= 30] # Exclude ad sets with less than 30 days of data
 
-	# Remove all duplicate keys 
-	# (some of the data is messed up and different ad sets have same ids)
-	setkey(data, id, group_id, date)
-	data <- unique(data)
-
 	#add conversion rates
-	data[, impressions_cr:=impressions/budget]
-	data[, clicks_cr:=clicks/budget]
-	data[, conversions_cr:=conversions/budget]
+	data[, impressions_cr:=impressions/spend]
+	data[, clicks_cr:=clicks/spend]
+	data[, conversions_cr:=conversions/spend]
 
 	return (data)
 }
@@ -410,7 +419,7 @@ getDecreasingEpsilonGreedyWeight <- function(data, constant) {
 getProbabilityWeights <- function(data) {
 	data[!.(1), exp := exp(r.avrg/temperature)]
 	data[!.(1), exp.sum := sum(exp), by=.(group_id, day.campaign)]
-  data[!.(1), weight := exp/exp.sum]
+  data[!.(1), weight := w.allocable * exp/exp.sum]
   data[.(1), weight := w.equal]
 	return(data[, weight])
 }
@@ -421,7 +430,6 @@ getSoftMaxWeight <- function(data, tau) {
   return(getProbabilityWeights(temp))
 }
 
-# see what goes wrong with e.g. this campaign: 55a665b858e7abd84e8b4568
 getSoftMixWeight <- function(data, tau) {
 	temp <- copy(data)
 	temp[, temperature := tau * log(day.campaign)/day.campaign]
@@ -435,7 +443,7 @@ getWeightWithCI <- function(data) {
 		lcb = r.avrg - ci
 	)]
 	temp[, lcb.max := max(lcb), by=.(group_id, day.campaign)]
-	temp[, surviving := ucb > lcb.max]
+	temp[, surviving := ucb >= lcb.max]
 	temp[surviving == TRUE, n.surviving := .N, by=.(group_id, day.campaign)]
 	temp[surviving == TRUE, weight := w.allocable/n.surviving]
 	temp[surviving == FALSE, weight := 0]
@@ -478,7 +486,7 @@ sampleBest <- function(data, rep) {
 	temp <- copy(data)
 	temp[, best.count := 0]
 	for(i in 1:rep) {
-		temp[, r.sample := rgamma(r.count, spend.thompson)]
+		temp[, r.sample := rgamma(1, shape=r.count, scale=spend.thompson), by=.(id)]
 		temp[, max := max(r.sample), by=.(group_id, day.campaign)]
 		temp[r.sample == max, best.count := best.count + 1]
 	}
