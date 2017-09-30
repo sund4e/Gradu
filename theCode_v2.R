@@ -77,7 +77,7 @@ getData <- function(){
 	return(data.all)
 }
 
-#-----------------------
+#Run code -----------------------
 runCode <- function() {
 	data <- getSavedData()
 	data.distributions <- getRewardDistributions(data)
@@ -85,7 +85,12 @@ runCode <- function() {
 	data.simulated <- calculateReturns(data.adsets)
 	data.campaigns <- getRegret(data.simulated)
 
-	#----------------------------
+	#Sequential experiment---
+	data.sequential <- getSequentialData(data, "impressions_cr")
+	data.returns <- calculateReturns(data.sequential)
+	data.result <- getRegret(data.returns)
+	
+	
 
 	# test <- getTestData(data.campaigns)
 	# output <- getReturnForAlgorithm(test, optimalAllocation, "test", data.adsets)
@@ -96,6 +101,8 @@ runCode <- function() {
 
 #system.time({output <- calculateReturns(data.adsets)})
 #data.campaigns <- getRegret(data.output)
+
+	#Negative greedy: 562a01de58e7abdf308b456a 
 
 }
 
@@ -116,8 +123,21 @@ getSavedData <- function () {
 
 crunchData <- function(dataframe) {
 	data <- as.data.table(dataframe) #Create data.table
+
+	#convert data types
+	data[, budget:=as.numeric(budget)]
+	data[, bid:=as.numeric(bid)]
+	data[, reach_estimate:=as.numeric(reach_estimate)]
+	data[, spend:=as.numeric(spend)]
+	data[, impressions:=as.numeric(impressions)]
+	data[, clicks:=as.numeric(clicks)]
+	data[, conversions:=as.numeric(conversions)]
+
+	#Filter data
 	data <- data[spend > 100] #Filter out rows that have spend less than 100
 	data <- data[bid > 0] #Filter out rows that have zero/NA in bid
+	setkey(data, group_id, date, spend, impressions, clicks, conversions)
+	data <- unique(data) #Remove duplicate adsets with still unique ids (some random fuckery in db) 
 	data <- data[, id:=paste(adset_id, bid, sep="")] #Create unique ids for adsets having different bids
 	data <- data[, adsets_in_campaign:=.N, by=.(group_id, date)][adsets_in_campaign > 1] #Filter out day rows when campaign has only one ad set
 	data <- data[, days_of_data:=.N, by=id][days_of_data >= 30] # Exclude ad sets with less than 30 days of data
@@ -127,19 +147,10 @@ crunchData <- function(dataframe) {
 	setkey(data, id, group_id, date)
 	data <- unique(data)
 
-	#convert data types
-	data <- data[, budget:=as.numeric(budget)]
-	data <- data[, bid:=as.numeric(bid)]
-	data <- data[, reach_estimate:=as.numeric(reach_estimate)]
-	data <- data[, spend:=as.numeric(spend)]
-	data <- data[, impressions:=as.numeric(impressions)]
-	data <- data[, clicks:=as.numeric(clicks)]
-	data <- data[, conversions:=as.numeric(conversions)]
-
 	#add conversion rates
-	data <- data[, impressions_cr:=impressions/budget]
-	data <- data[, clicks_cr:=clicks/budget]
-	data <- data[, conversions_cr:=conversions/budget]
+	data[, impressions_cr:=impressions/budget]
+	data[, clicks_cr:=clicks/budget]
+	data[, conversions_cr:=conversions/budget]
 
 	return (data)
 }
@@ -162,6 +173,19 @@ getRewardDistributions <- function(dataTable) {
 	cat("\u2713\n")
 
 	return (data.combined)
+}
+
+#Sequential data ----
+getSequentialData <- function(data, conversion_column) {
+	data.sequential <- data[, .(
+		date = date,
+		group_id = group_id,
+		id = adset_id,
+		r = get(conversion_column)
+	)]
+
+	data.sequential = getRunningDays(data.sequential)
+	return(data.sequential)
 }
 
 #Sample creation-----------------------
@@ -296,8 +320,6 @@ calculateReturns <- function (dataTable) {
 			cat(".")
 		}
 	}
-
-	setkey(data, day.campaign)
 
 	cat("(100%) \n")
 	print(data)
