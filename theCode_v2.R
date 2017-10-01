@@ -252,7 +252,6 @@ calculateReturns <- function (dataTable) {
 	data[, r.avrg := getAverageReturn(.SD)]
 	data[!.(1), n.allocable := .N, by=.(group_id, date)]
 	data[, w.allocable := getAllocableWeight(.SD)]
-	data[, r.max := getMaxForDay(.SD, 'r')]
 	data[, r.avrg.max := getMaxForDay(.SD, 'r.avrg')]
 	data[, budget := budget]
 	data[, spend.equal := getAdsetSpend(.SD, 'w.equal')]
@@ -269,10 +268,13 @@ calculateReturns <- function (dataTable) {
 	data[, r.count := 0]
 	cat("\u2713\n")
 
+	#Init columns for greedy
+	data[, r.greedy := 0]
+	data[, r.avrg.greedy := 0]
+
 	cat("Calculating returns for greedy algorithms... ")
 	setkey(data, day.adset)
-	data[, optimal := getGreedyWeight(.SD, 'r')]
-	data[, greedy := getGreedyWeight(.SD, 'r.avrg')]
+	data[, optimal := getOptimalWeight(.SD, 'r')]
 	data[, egreedy.01 := getEpsilonGreedyWeight(.SD, epsilon01)]
 	data[, egreedy.05 := getEpsilonGreedyWeight(.SD, epsilon05)]
 	data[, egreedy.decreasing.1 := getDecreasingEpsilonGreedyWeight(.SD, c1)]
@@ -288,38 +290,51 @@ calculateReturns <- function (dataTable) {
 	cat("\u2713\n")
 
 	cat("Calculating returns for UCB and Thompson... \n")
+	#Set equal weights as strating point
 	data[, ucb := w.equal]
 	data[, ucb.tuned := w.equal]
 	data[, thompson := w.equal]
+	data[, greedy := 0]
+	data[.(1), greedy := w.equal]
+
+	#Set weights for consecutive days
 	for(i in 1:days) {
 		setkey(data, id, day.adset)
 		data[, `:=` (
 			temp.ucb = sum(spend.ucb),
 			temp.ucb.tuned = sum(spend.ucb.tuned),
 			temp.thompson = sum(spend.thompson),
-			temp.r.count = sum(r.count)
+			temp.r.count = sum(r.count),
+			temp.sum.r.greedy = sum(r.greedy),
+			count.greedy = sum(ceiling(greedy))
 		), by = .(id)]
+
+		# setkey(data, day.adset)
+		# data[, count.greedy := sum(ceiling(greedy)), by = .(id)]
 
 		setkey(data, day.campaign)
 		data[.(i), `:=` (
 			spend.ucb = temp.ucb,
 			spend.ucb.tuned = temp.ucb.tuned,
 			spend.thompson = temp.thompson,
-			r.count = temp.r.count
+			r.count = temp.r.count,
+			r.avrg.greedy = temp.sum.r.greedy / count.greedy
 		)]
 
 		setkey(data, day.campaign, id)
 		data[.(i), ucb := getUCBWeight(.SD)]
 		data[.(i), ucb.tuned := getUCBTunedWeight(.SD)]
 		data[.(i), thompson := getThompsonWeight(.SD)]
+		data[.(i), greedy := getGreedyWeight(.SD)]
 
 		#Update running numbers
 		setkey(data, day.campaign)
 		data[.(i), `:=` (
-			spend.ucb = temp.ucb + ucb * budget,
-			spend.ucb.tuned = temp.ucb.tuned + ucb.tuned * budget,
-			spend.thompson = temp.thompson + thompson * budget,
-			r.count = temp.r.count + r * (thompson * budget)
+			spend.ucb = spend.ucb + ucb * budget,
+			spend.ucb.tuned = spend.ucb.tuned + ucb.tuned * budget,
+			spend.thompson = spend.thompson + thompson * budget,
+			r.count = r.count + r * (thompson * budget),
+			r.greedy = r * ceiling(greedy)
 		)]
 		
 		# Log progress to console
@@ -381,20 +396,33 @@ getReturnVariance <- function (data) {
 
 #Allocation algorithms ------------------
 
-getGreedyWeight <- function(data, column) {
-	max.column = paste(column, 'max', sep='.')
+# Input keys: day.adset
+getOptimalWeight <- function(data, column) {
 	temp <- copy(data)
-  temp[get(column) == get(max.column), weight := w.allocable]
-  temp[get(column) != get(max.column), weight := 0]
-  temp[get(max.column) == 0, weight := w.equal]
+	temp[, max := getMaxForDay(.SD, column)]
+	temp[, weight := 0]
+  temp[get(column) == max, weight := w.allocable]
+  temp[max == 0, weight := w.equal]
+	temp[.(1), weight := w.equal]
+	return(temp[, weight])
+}
+
+# Input keys: day.campign & id
+getGreedyWeight <- function(data) {
+	temp <- copy(data)
+	setkey(temp, day.adset)
+	temp[, weight := getOptimalWeight(.SD, 'r.avrg.greedy')]
+	setkey(temp, day.campaign, id)
   return(temp[, weight])
 }
 
+# Input keys: day.adset
 addWeight <- function(data, column, column.true, column.false) {
 	max.column = paste(column, 'max', sep='.')
+	data[, weight := get(column.false)]
   data[get(column) == get(max.column), weight := get(column.true)]
-  data[get(column) != get(max.column), weight := get(column.false)]
   data[get(max.column) == 0, weight := w.equal]
+	data[.(1), weight := w.equal]
 }
 
 getEpsilonGreedyWeight <- function(data, epsilon) {
@@ -432,7 +460,7 @@ getSoftMaxWeight <- function(data, tau) {
 
 getSoftMixWeight <- function(data, tau) {
 	temp <- copy(data)
-	temp[, temperature := tau * log(day.campaign)/day.campaign]
+	temp[, temperature := tau/day.campaign]
   return(getProbabilityWeights(temp))
 }
 
