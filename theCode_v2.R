@@ -99,12 +99,12 @@ runCode <- function() {
 	# test <- getTestData(data.campaigns)
 	# output <- getReturnForAlgorithm(test, optimalAllocation, "test", data.adsets)
 	# data.adsets <- getSimulatedAdsets(data.distributions, "impressions")
-# output <- calculateReturns(data.adsets)
-# output <- calculateReturns(data.adsets[group_id == "5527905fd1a561f72d8b456c"])
-# output[group_id=="55fbd93458e7ab426a8b4567"][day==303]
+	# output <- calculateReturns(data.adsets)
+	# output <- calculateReturns(data.adsets[group_id == "5527905fd1a561f72d8b456c"])
+	# output[group_id=="55fbd93458e7ab426a8b4567"][day==303]
 
-#system.time({output <- calculateReturns(data.adsets)})
-#data.campaigns <- getRegret(data.output)
+	#system.time({output <- calculateReturns(data.adsets)})
+	#data.campaigns <- getRegret(data.output)
 
 	#Investigate
 	# data.returns[group_id == "560bb3cff789b8e5698b4567"][day.campaign == 124]
@@ -524,7 +524,7 @@ sampleBest <- function(data, rep) {
 	temp <- copy(data)
 	temp[, best.count := 0]
 	for(i in 1:rep) {
-		temp[, r.sample := rgamma(1, shape=sum.r.count, scale=sum.spend.thompson), by=.(id)]
+		temp[, r.sample := rgamma(1, shape=sum.r.count, scale=1/sum.spend.thompson), by=.(id)]
 		temp[, max := max(r.sample), by=.(group_id, day.campaign)]
 		temp[r.sample == max, best.count := best.count + 1]
 	}
