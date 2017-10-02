@@ -89,6 +89,9 @@ runCode <- function() {
 	data.sequential <- getSequentialData(data, "impressions_cr")
 	data.returns <- calculateReturns(data.sequential)
 	data.result <- getRegret(data.returns)
+	data.plot <- getPlotData(data.returs)
+	ggplot(data.plot, aes(variable, value)) + geom_boxplot(outlier.shape = NA)
+
 	data.result.avrg = data.result[, lapply(.SD, mean), by=group_id]
 	data.result.avrg = data.result[, lapply(.SD, mean), by=day.campaign]
 
@@ -99,12 +102,12 @@ runCode <- function() {
 	# test <- getTestData(data.campaigns)
 	# output <- getReturnForAlgorithm(test, optimalAllocation, "test", data.adsets)
 	# data.adsets <- getSimulatedAdsets(data.distributions, "impressions")
-	# output <- calculateReturns(data.adsets)
-	# output <- calculateReturns(data.adsets[group_id == "5527905fd1a561f72d8b456c"])
-	# output[group_id=="55fbd93458e7ab426a8b4567"][day==303]
+# output <- calculateReturns(data.adsets)
+# output <- calculateReturns(data.adsets[group_id == "5527905fd1a561f72d8b456c"])
+# output[group_id=="55fbd93458e7ab426a8b4567"][day==303]
 
-	#system.time({output <- calculateReturns(data.adsets)})
-	#data.campaigns <- getRegret(data.output)
+#system.time({output <- calculateReturns(data.adsets)})
+#data.campaigns <- getRegret(data.output)
 
 	#Investigate
 	# data.returns[group_id == "560bb3cff789b8e5698b4567"][day.campaign == 124]
@@ -542,7 +545,7 @@ getThompsonWeight <- function(data) {
 	return (temp[, weight])
 }
 
-#Getting regret ------------------------------
+#Anaysing data ------------------------------
 getRegret <- function (data) {
 	data.campaigns = data[, .(
 		r.optimal = sum(optimal * r),
@@ -576,8 +579,18 @@ getRegret <- function (data) {
 		regret.ucb.tuned = r.optimal - r.ucb.tuned,
 		regret.thompson = r.optimal - r.thompson
 	)]
-
 	return(data.campaigns)
+}
+
+getPlotData <- function(data) {
+	data.cumulative <- data[, lapply(.SD, sum), by=group_id]
+	id.columns = c("group_id", "day.campaign")
+	measures = c("regret.equal", "regret.greedy", "regret.egreedy.01", "regret.egreedy.05", 
+	"regret.egreedy.decreasing.1", "regret.egreedy.decreasing.10", "regret.softmax.25", 
+	"regret.softmax.50", "regret.softmix.25", "regret.softmix.50", "regret.ucb", 
+	"regret.ucb.tuned", "regret.thompson")
+	data.plot = melt(data.cumulative, id.vars = id.columns, measure.vars = measures)
+	return (data.plot)
 }
 
 #Some random crap----------------------------------------------------
