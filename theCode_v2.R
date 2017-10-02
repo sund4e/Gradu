@@ -90,6 +90,7 @@ runCode <- function() {
 	data.returns <- calculateReturns(data.sequential)
 	data.result <- getRegret(data.returns)
 	data.result.avrg = data.result[, lapply(.SD, mean), by=group_id]
+	data.result.avrg = data.result[, lapply(.SD, mean), by=day.campaign]
 
 	summary(data.result)
 	
@@ -116,6 +117,10 @@ runCode <- function() {
 	# no UCB for campaign is 0 
 	# no softmix or max 0
 
+	#ggplot(data.result[group_id == "56cd3301f789b8307c8b4567"], aes(x=day.campaign)) + geom_point(aes(y=r.optimal), colour="green") + geom_point(aes(y=r.greedy), colour="red") + geom_point(aes(y=r.thompson))
+	# Investigate thompson:
+	# data.returns[group_id == "580f517a1aa2928b108b4567"][day.campaign == 2]
+	# check that all campaign have enough data + no lonly adsets : 580f517a1aa2928b108b4567
 }
 
 #Data generation--------------------
@@ -148,13 +153,15 @@ crunchData <- function(dataframe) {
 	#Filter data
 	data <- data[spend > 100] #Filter out rows that have spend less than 100
 	data <- data[bid > 0] #Filter out rows that have zero/NA in bid
-	setkey(data, group_id, date, spend, impressions, clicks, conversions)
+	setkey(data, group_id, date, spend)
 	data <- unique(data) #Remove duplicate adsets with still unique ids (some random fuckery in db)
-	data <- data[, id:=paste(adset_id, bid, sep="")] #Create unique ids for adsets having different bids
-	setkey(data, id, group_id, date)
+	data[, id:=paste(group_id, adset_id, bid, sep="")] #Create unique ids for adsets having different bids
+	setkey(data, id, date)
 	data <- unique(data) # Remove all duplicate keys (some of the data is messed up and different ad sets have same ids)
-	data <- data[, adsets_in_campaign:=.N, by=.(group_id, date)][adsets_in_campaign > 1] #Filter out day rows when campaign has only one ad set
-	data <- data[, days_of_data:=.N, by=id][days_of_data >= 30] # Exclude ad sets with less than 30 days of data
+	data[, adsets_in_campaign:=.N, by=.(group_id, date)]
+	data <- data[adsets_in_campaign > 1] #Filter out day rows when campaign has only one ad set
+	data[, days_of_data:=.N, by=id]
+	data <- data[days_of_data >= 30] # Exclude ad sets with less than 30 days of data
 
 	#add conversion rates
 	data[, impressions_cr:=impressions/spend]
@@ -189,7 +196,7 @@ getSequentialData <- function(data, conversion_column) {
 	data.sequential <- data[, .(
 		date = date,
 		group_id = group_id,
-		id = adset_id,
+		id = id,
 		r = get(conversion_column)
 	)]
 
@@ -254,7 +261,6 @@ calculateReturns <- function (dataTable) {
 	data[, w.allocable := getAllocableWeight(.SD)]
 	data[, r.avrg.max := getMaxForDay(.SD, 'r.avrg')]
 	data[, budget := budget]
-	data[, spend.equal := getAdsetSpend(.SD, 'w.equal')]
 
 	#Init columns for UCB
 	data[, ln.spend := log(budget * (day.campaign-1))]
@@ -304,36 +310,39 @@ calculateReturns <- function (dataTable) {
 			temp.ucb = sum(spend.ucb),
 			temp.ucb.tuned = sum(spend.ucb.tuned),
 			temp.thompson = sum(spend.thompson),
-			temp.r.count = sum(r.count),
+			temp.sum.r.count = sum(r.count),
 			temp.sum.r.greedy = sum(r.greedy),
-			count.greedy = sum(ceiling(greedy))
+			temp.count.greedy = sum(ceiling(greedy))
 		), by = .(id)]
-
-		# setkey(data, day.adset)
-		# data[, count.greedy := sum(ceiling(greedy)), by = .(id)]
 
 		setkey(data, day.campaign)
 		data[.(i), `:=` (
-			spend.ucb = temp.ucb,
-			spend.ucb.tuned = temp.ucb.tuned,
-			spend.thompson = temp.thompson,
-			r.count = temp.r.count,
-			r.avrg.greedy = temp.sum.r.greedy / count.greedy
+			sum.spend.ucb = temp.ucb,
+			sum.spend.ucb.tuned = temp.ucb.tuned,
+			sum.spend.thompson = temp.thompson,
+			sum.r.count = temp.sum.r.count,
+			r.avrg.greedy = temp.sum.r.greedy / temp.count.greedy
 		)]
 
 		setkey(data, day.campaign, id)
-		data[.(i), ucb := getUCBWeight(.SD)]
-		data[.(i), ucb.tuned := getUCBTunedWeight(.SD)]
-		data[.(i), thompson := getThompsonWeight(.SD)]
-		data[.(i), greedy := getGreedyWeight(.SD)]
+		data[.(i), `:=` (
+			ucb = getUCBWeight(.SD),
+			ucb.tuned = getUCBTunedWeight(.SD),
+			thompson = getThompsonWeight(.SD),
+			greedy = getGreedyWeight(.SD)
+		)]
+		# data[.(i), ucb := getUCBWeight(.SD)]
+		# data[.(i), ucb.tuned := getUCBTunedWeight(.SD)]
+		# data[.(i), thompson := getThompsonWeight(.SD)]
+		# data[.(i), greedy := getGreedyWeight(.SD)]
 
 		#Update running numbers
 		setkey(data, day.campaign)
 		data[.(i), `:=` (
-			spend.ucb = spend.ucb + ucb * budget,
-			spend.ucb.tuned = spend.ucb.tuned + ucb.tuned * budget,
-			spend.thompson = spend.thompson + thompson * budget,
-			r.count = r.count + r * (thompson * budget),
+			spend.ucb = ucb * budget,
+			spend.ucb.tuned = ucb.tuned * budget,
+			spend.thompson = thompson * budget,
+			r.count = r * (thompson * budget),
 			r.greedy = r * ceiling(greedy)
 		)]
 		
@@ -446,6 +455,7 @@ getDecreasingEpsilonGreedyWeight <- function(data, constant) {
 
 getProbabilityWeights <- function(data) {
 	data[!.(1), exp := exp(r.avrg/temperature)]
+	# data[is.infinite(exp), exp := .Machine$double.xmax]
 	data[!.(1), exp.sum := sum(exp), by=.(group_id, day.campaign)]
   data[!.(1), weight := w.allocable * exp/exp.sum]
   data[.(1), weight := w.equal]
@@ -460,7 +470,7 @@ getSoftMaxWeight <- function(data, tau) {
 
 getSoftMixWeight <- function(data, tau) {
 	temp <- copy(data)
-	temp[, temperature := tau/day.campaign]
+	temp[, temperature := tau * log(day.campaign)/day.campaign]
   return(getProbabilityWeights(temp))
 }
 
@@ -482,7 +492,7 @@ getUCBWeight <- function(data) {
 	temp <- copy(data)
 	setkey(temp, day.adset)
 	temp[, ci := 0]
-	temp[!.(1), ci := sqrt((2 * ln.spend)/spend.ucb)]
+	temp[!.(1), ci := sqrt((2 * ln.spend)/sum.spend.ucb)]
 	temp[!.(1), weight := getWeightWithCI(.SD)]
 	temp[.(1), weight := w.equal]
 	setkey(temp, day.campaign, id)
@@ -491,11 +501,11 @@ getUCBWeight <- function(data) {
 
 getTunedConfidenceInterval <- function(data) {
 	temp <- copy(data)
-	temp[, ci.variance := sqrt((2 * ln.spend)/spend.ucb.tuned)]
+	temp[, ci.variance := sqrt((2 * ln.spend)/sum.spend.ucb.tuned)]
 	temp[, V := r.variance + ci.variance]
 	temp[, multiplier := 1/4]
 	temp[V < multiplier, multiplier := V]
-	temp[, ci := sqrt((ln.time/spend.ucb.tuned)*multiplier)]
+	temp[, ci := sqrt((ln.time/sum.spend.ucb.tuned)*multiplier)]
 	return(temp[, ci])
 }
 
@@ -514,7 +524,7 @@ sampleBest <- function(data, rep) {
 	temp <- copy(data)
 	temp[, best.count := 0]
 	for(i in 1:rep) {
-		temp[, r.sample := rgamma(1, shape=r.count, scale=spend.thompson), by=.(id)]
+		temp[, r.sample := rgamma(1, shape=sum.r.count, scale=sum.spend.thompson), by=.(id)]
 		temp[, max := max(r.sample), by=.(group_id, day.campaign)]
 		temp[r.sample == max, best.count := best.count + 1]
 	}
