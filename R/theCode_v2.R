@@ -18,25 +18,29 @@ runCode <- function() {
 	impressions.result <- getRegret(data.returns)
 	impressions.plot <- getPlotData(impressions.result)
 	impressions.time <- getTimeData(impressions.result)
-
 	ggplot(impressions.plot, aes(x = variable, y = value)) + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim=c(0,8))
 	ggplot(impressions.time, aes(x = day.campaign, y = value, color = variable)) + geom_line()
 
-	data.result.avrg = data.result[, lapply(.SD, mean), by=group_id]
-	data.result.avrg = data.result[, lapply(.SD, mean), by=day.campaign]
-
-	summary(data.result)
+	clicks.sequential <- getSequentialData(data, "clicks_cr")
+	clicks.returns <- calculateReturns(clicks.sequential)
+	clicks.result <- getRegret(clicks.returns)
+	clicks.plot <- getPlotData(clicks.result)
+	clicks.time <- getTimeData(clicks.result)
 
 	conversions.sequential <- getSequentialData(data, "conversions_cr")
 	conversions.returns <- calculateReturns(conversions.sequential)
 	conversions.result <- getRegret(conversions.returns)
 	conversions.plot <- getPlotData(conversions.result)
 	conversions.time <- getTimeData(conversions.result)
-	
+	ggplot(conversions.plot, aes(x = variable, y = value)) + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim=c(0, 0.025))
+	ggplot(conversions.time, aes(x = day.campaign, y = log(value), color = variable)) + geom_line()
 
-	#TO INVESTIGATE:
-	#How did this get throug?: 560b5f7ef789b81e438b456a
-	#data[group_id == "55fffb4058e7ab2d688b4567"][date == "2016-03-11"]
+	result <- combineResults(impressions.result, clicks.result, conversions.result)
+
+	data.result.avrg = data.result[, lapply(.SD, mean), by=group_id]
+	data.result.avrg = data.result[, lapply(.SD, mean), by=day.campaign]
+
+	summary(data.result)
 }
 
 #Anaysing data ------------------------------
@@ -99,4 +103,44 @@ getTimeData <- function(data) {
 	data.plot = melt(
 		data.cumulative, id.vars = id.columns, measure.vars = measures, variable.name = "variable")
 	return (data.plot)
+}
+
+combineResults <- function(impressions.result, clicks.result, conversions.result) {
+	impressions <- getWithRewardType(impressions.result, "Impressions")
+	clicks <- getWithRewardType(clicks.result, "Clicks")
+	conversions <- getWithRewardType(conversions.result, "Conversions")
+	combined <- rbindlist(list(impressions, clicks, conversions))
+}
+
+getWithRewardType <- function(dataTable, rewardType) {
+	data <- copy(dataTable)
+	data[, reward := rewardType]
+	setkey(data, day.campaign, group_id, reward)
+	return (data)
+}
+
+getSummaryTable <- function(data) {
+	temp <- copy(data)
+	average <- getSummary(temp, mean)
+	stdev <- getSummary(temp, sd)
+	summary <- average[stdev]
+	summary.rounded <- summary[, lapply(.SD, round, digits = 3), .SDcols = -c("Algorithm")]
+	return (summary)
+}
+
+getSummary <- function(data, fun) {
+	aggregated <- data[, lapply(.SD, fun), keyby=reward, .SDcols = -c("group_id")]
+	summary <- getTranspose(aggregated)
+}
+
+getTranspose <- function(dataTable) {
+  row.names = names(dataTable)
+	col.names = c(dataTable[, reward], "Algorithm")
+  data.transpose = transpose(dataTable)
+	data.transpose[, "Algorithm" := row.names]
+  setnames(data.transpose, col.names)
+	data.transpose = data.transpose[-1,] #remove rows for names
+  setcolorder(data.transpose, rev(col.names))
+	setkey(data.transpose, Algorithm)
+  return (data.transpose)
 }

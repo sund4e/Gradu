@@ -47,3 +47,17 @@ crunchData <- function(dataframe) {
 
 	return (data)
 }
+
+summaryData <- function(dataTable) {		
+	cat("Rows: ")		
+	cat(dataTable[, .N])		
+	cat("\n")		
+		
+	cat("Campaigns: ")		
+	cat(dataTable[, uniqueN(group_id)])		
+	cat("\n")		
+		
+	cat("Adsets: ")		
+	cat(dataTable[, uniqueN(id)])		
+	cat("\n")		
+ }
