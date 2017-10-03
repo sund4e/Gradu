@@ -50,7 +50,6 @@ getDecreasingEpsilonGreedyWeight <- function(data, constant) {
 
 getProbabilityWeights <- function(data) {
 	data[!.(1), exp := exp(r.avrg/temperature)]
-	# data[is.infinite(exp), exp := .Machine$double.xmax]
 	data[!.(1), exp.sum := sum(exp), by=.(group_id, day.campaign)]
   data[!.(1), weight := w.allocable * exp/exp.sum]
   data[.(1), weight := w.equal]
