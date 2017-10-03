@@ -89,41 +89,27 @@ runCode <- function() {
 	data.sequential <- getSequentialData(data, "impressions_cr")
 	data.returns <- calculateReturns(data.sequential)
 	data.result <- getRegret(data.returns)
-	data.plot <- getPlotData(data.returs)
-	ggplot(data.plot, aes(variable, value)) + geom_boxplot(outlier.shape = NA)
+
+	data.plot <- getPlotData(data.result)
+	ggplot2(data.plot, aes(variable, value)) + geom_boxplot(outlier.shape = NA)
+	ggplot(data.plot, aes(variable, value)) + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim=c(0,8))
+	ggplot2(data.result[group_id == "56cd3301f789b8307c8b4567"], aes(x=day.campaign)) 
+	+ geom_point(aes(y=r.optimal), colour="green") 
+	+ geom_point(aes(y=r.greedy), colour="red") 
+	+ geom_point(aes(y=r.thompson))
+
+	data.time <- getTimeData(data.result)
+	ggplot2(data.time, aes(day.campaign, value)) + geom_line()
 
 	data.result.avrg = data.result[, lapply(.SD, mean), by=group_id]
 	data.result.avrg = data.result[, lapply(.SD, mean), by=day.campaign]
 
 	summary(data.result)
 	
-	
 
-	# test <- getTestData(data.campaigns)
-	# output <- getReturnForAlgorithm(test, optimalAllocation, "test", data.adsets)
-	# data.adsets <- getSimulatedAdsets(data.distributions, "impressions")
-# output <- calculateReturns(data.adsets)
-# output <- calculateReturns(data.adsets[group_id == "5527905fd1a561f72d8b456c"])
-# output[group_id=="55fbd93458e7ab426a8b4567"][day==303]
-
-#system.time({output <- calculateReturns(data.adsets)})
-#data.campaigns <- getRegret(data.output)
-
-	#Investigate
-	# data.returns[group_id == "560bb3cff789b8e5698b4567"][day.campaign == 124]
-	# UCBs and Thompson not working
-	# Fix greedy algorithm = don't add to average unless budget allocated
-	# Would Beta distribution work better for thompson
-
-	#TO TEST:
-	# no thompson sampling as negative regret
-	# no UCB for campaign is 0 
-	# no softmix or max 0
-
-	#ggplot(data.result[group_id == "56cd3301f789b8307c8b4567"], aes(x=day.campaign)) + geom_point(aes(y=r.optimal), colour="green") + geom_point(aes(y=r.greedy), colour="red") + geom_point(aes(y=r.thompson))
-	# Investigate thompson:
-	# data.returns[group_id == "580f517a1aa2928b108b4567"][day.campaign == 2]
-	# check that all campaign have enough data + no lonly adsets : 580f517a1aa2928b108b4567
+	#TO INVESTIGATE:
+	#How did this get throug?: 560b5f7ef789b81e438b456a
+	#data[group_id == "55fffb4058e7ab2d688b4567"][date == "2016-03-11"]
 }
 
 #Data generation--------------------
@@ -154,17 +140,19 @@ crunchData <- function(dataframe) {
 	data[, conversions:=as.numeric(conversions)]
 
 	#Filter data
-	data <- data[spend > 100] #Filter out rows that have spend less than 100
+	data <- data[spend >= 100] #Filter out rows that have spend less than 100
 	data <- data[bid > 0] #Filter out rows that have zero/NA in bid
 	setkey(data, group_id, date, spend)
 	data <- unique(data) #Remove duplicate adsets with still unique ids (some random fuckery in db)
 	data[, id:=paste(group_id, adset_id, bid, sep="")] #Create unique ids for adsets having different bids
 	setkey(data, id, date)
 	data <- unique(data) # Remove all duplicate keys (some of the data is messed up and different ad sets have same ids)
-	data[, adsets_in_campaign:=.N, by=.(group_id, date)]
-	data <- data[adsets_in_campaign > 1] #Filter out day rows when campaign has only one ad set
 	data[, days_of_data:=.N, by=id]
 	data <- data[days_of_data >= 30] # Exclude ad sets with less than 30 days of data
+	data[, adsets_in_campaign:=.N, by=.(group_id, date)]
+	data <- data[adsets_in_campaign > 1] #Filter out day rows when campaign has only one ad set
+	data[, days_of_data_campaign:=length(unique(date)), by=.(group_id)]
+	data <- data[days_of_data_campaign >= 30] # Exclude campaigns with less than 30 days of data
 
 	#add conversion rates
 	data[, impressions_cr:=impressions/spend]
@@ -226,6 +214,8 @@ sampleObservations	<- function(observations) {
 	sample(observations, size = 1, replace=TRUE)
 }
 
+#Preparing data ----------
+
 getRunningDays <- function(data) {
 	cat("Add columns for running days... ")
 	setkey(data, group_id, date, id)
@@ -243,19 +233,7 @@ getRunningDays <- function(data) {
 	return (data.combined)
 }
 
-#Simulation ----------------------------------------------
-calculateReturns <- function (dataTable) {
-	data <- copy(dataTable)
-	# setkey(data, group_id, day.campaign, id)
-	days <- max(data$day.campaign)
-	budget <- 100
-	epsilon05 = 0.5
-	epsilon01 = 0.1
-	c1 = 1
-	c10 = 10
-	tau25 = 25
-	tau50 = 50
-
+setInitialColumns <- function (data, budget) {
 	cat("Adding default columns... ")
 	setkey(data, day.adset)
 	data[, w.equal := 1/.N, by=.(group_id, day.campaign)]
@@ -275,11 +253,27 @@ calculateReturns <- function (dataTable) {
 	#Init columns for Thopson Sampling
 	data[, spend.thompson := 0]
 	data[, r.count := 0]
-	cat("\u2713\n")
 
 	#Init columns for greedy
 	data[, r.greedy := 0]
 	data[, r.avrg.greedy := 0]
+	cat("\u2713\n")
+}
+
+#Simulation ----------------------------------------------
+calculateReturns <- function (dataTable) {
+	data <- copy(dataTable)
+	# setkey(data, group_id, day.campaign, id)
+	days <- max(data$day.campaign)
+	budget <- 100
+	epsilon05 = 0.5
+	epsilon01 = 0.1
+	c1 = 1
+	c10 = 10
+	tau25 = 25
+	tau50 = 50
+
+	setInitialColumns(data, budget)
 
 	cat("Calculating returns for greedy algorithms... ")
 	setkey(data, day.adset)
@@ -583,13 +577,33 @@ getRegret <- function (data) {
 }
 
 getPlotData <- function(data) {
-	data.cumulative <- data[, lapply(.SD, sum), by=group_id]
+	data.regret <- data[day.campaign > 1, lapply(.SD, mean), by=.(group_id, day.campaign)]
 	id.columns = c("group_id", "day.campaign")
 	measures = c("regret.equal", "regret.greedy", "regret.egreedy.01", "regret.egreedy.05", 
 	"regret.egreedy.decreasing.1", "regret.egreedy.decreasing.10", "regret.softmax.25", 
 	"regret.softmax.50", "regret.softmix.25", "regret.softmix.50", "regret.ucb", 
 	"regret.ucb.tuned", "regret.thompson")
-	data.plot = melt(data.cumulative, id.vars = id.columns, measure.vars = measures)
+	data.plot = melt(
+		data.regret, 
+		id.vars = id.columns, 
+		measure.vars = measures,
+		variable.name = "Algorithm")
+	return (data.plot)
+}
+
+getTimeData <- function(data) {
+	data.excl <- data[, setdiff(names(data), c("group_id")), with = FALSE]
+	data.cumulative <- data.excl[, lapply(.SD, sum), by=day.campaign]
+	id.columns = c("day.campaign")
+	measures = c("regret.equal", "regret.greedy", "regret.egreedy.01", "regret.egreedy.05", 
+	"regret.egreedy.decreasing.1", "regret.egreedy.decreasing.10", "regret.softmax.25", 
+	"regret.softmax.50", "regret.softmix.25", "regret.softmix.50", "regret.ucb", 
+	"regret.ucb.tuned", "regret.thompson")
+	data.plot = melt(
+		data.cumulative, 
+		id.vars = id.columns, 
+		measure.vars = measures, 
+		variable.name = "Algorithm")
 	return (data.plot)
 }
 
