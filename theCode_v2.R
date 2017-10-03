@@ -105,6 +105,12 @@ runCode <- function() {
 	data.result.avrg = data.result[, lapply(.SD, mean), by=day.campaign]
 
 	summary(data.result)
+
+	conversions.sequential <- getSequentialData(data, "conversions_cr")
+	conversions.returns <- calculateReturns(conversions.sequential)
+	conversions.result <- getRegret(conversions.returns)
+	conversions.plot <- getPlotData(conversions.result)
+	conversions.time <- getTimeData(conversions.result)
 	
 
 	#TO INVESTIGATE:
@@ -352,6 +358,9 @@ calculateReturns <- function (dataTable) {
 	}
 
 	cat("(100%) \n")
+
+	data[, greedy := getCorrectedGreedy(.SD)]
+
 	print(data)
 	return (data)
 }
@@ -398,6 +407,16 @@ getReturnVariance <- function (data) {
   temp[, variance := cumvar(r), by=.(id)]
   temp[, variance.lag := shift(variance, 1), by=.(id)]
   return(temp[, variance.lag])
+}
+
+
+# Greedy may end up allocating over 1 when the adsets are avaluated equally good
+# Quicker to do the data cleanup afterwards
+getCorrectedGreedy <- function (data) {
+	temp <- copy(data)
+	temp[, := total.greedy = sum(greedy), by = .(group_id, day.campaign)]
+	temp[total.greedy > 0 & greedy == w.allocable, greedy := w.allocable / n.allocable]
+	return (temp[, greedy])
 }
 
 #Allocation algorithms ------------------
@@ -533,7 +552,8 @@ getThompsonWeight <- function(data) {
 	setkey(temp, day.adset)
 	rep <- 100
 	temp[!.(1), best.count := sampleBest(.SD, rep)]
-	temp[!.(1), weight := best.count / rep * w.allocable]
+	temp[!.(1), sum.best.count := sum(best.count), by = .(group_id, day.campaign)]
+	temp[!.(1), weight := best.count / sum.best.count * w.allocable]
 	temp[.(1), weight := w.equal]
 	setkey(temp, day.campaign, id)
 	return (temp[, weight])
@@ -573,21 +593,18 @@ getRegret <- function (data) {
 		regret.ucb.tuned = r.optimal - r.ucb.tuned,
 		regret.thompson = r.optimal - r.thompson
 	)]
+
+	data.campaigns = data.campaigns[day.campaign > 1]
 	return(data.campaigns)
 }
 
 getPlotData <- function(data) {
-	data.regret <- data[day.campaign > 1, lapply(.SD, mean), by=.(group_id, day.campaign)]
 	id.columns = c("group_id", "day.campaign")
 	measures = c("regret.equal", "regret.greedy", "regret.egreedy.01", "regret.egreedy.05", 
 	"regret.egreedy.decreasing.1", "regret.egreedy.decreasing.10", "regret.softmax.25", 
 	"regret.softmax.50", "regret.softmix.25", "regret.softmix.50", "regret.ucb", 
 	"regret.ucb.tuned", "regret.thompson")
-	data.plot = melt(
-		data.regret, 
-		id.vars = id.columns, 
-		measure.vars = measures,
-		variable.name = "Algorithm")
+	data.plot = melt(data, id.vars = id.columns, measure.vars = measures)
 	return (data.plot)
 }
 
@@ -600,10 +617,7 @@ getTimeData <- function(data) {
 	"regret.softmax.50", "regret.softmix.25", "regret.softmix.50", "regret.ucb", 
 	"regret.ucb.tuned", "regret.thompson")
 	data.plot = melt(
-		data.cumulative, 
-		id.vars = id.columns, 
-		measure.vars = measures, 
-		variable.name = "Algorithm")
+		data.cumulative, id.vars = id.columns, measure.vars = measures, variable.name = "variable")
 	return (data.plot)
 }
 
