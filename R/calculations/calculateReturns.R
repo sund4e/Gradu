@@ -8,8 +8,8 @@ calculateReturns <- function (dataTable) {
 	epsilon01 = 0.1
 	c1 = 1
 	c10 = 10
-	tau25 = 25
-	tau50 = 50
+	tau1 = 1
+	tau5 = 5
 
 	data <- copy(dataTable)
   data <- getRunningDays(data)
@@ -26,10 +26,10 @@ calculateReturns <- function (dataTable) {
 
 	cat("Calculating returns for probability matching... ")
 	setkey(data, day.adset)
-	data[, softmax.25 := getSoftMaxWeight(.SD, tau25)]
-	data[, softmax.50 := getSoftMaxWeight(.SD, tau50)]
-	data[, softmix.25 := getSoftMixWeight(.SD, tau25)]
-	data[, softmix.50 := getSoftMixWeight(.SD, tau50)]
+	data[, softmax.1 := getSoftMaxWeight(.SD, tau1)]
+	data[, softmax.5 := getSoftMaxWeight(.SD, tau5)]
+	data[, softmix.1 := getSoftMixWeight(.SD, tau1)]
+	data[, softmix.5 := getSoftMixWeight(.SD, tau5)]
 	cat("\u2713\n")
 
 	cat("Calculating returns for UCB and Thompson... \n")
