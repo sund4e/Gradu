@@ -47,6 +47,12 @@ runCode <- function() {
 	data.result.avrg = data.result[, lapply(.SD, mean), by=group_id]
 	data.result.avrg = data.result[, lapply(.SD, mean), by=day.campaign]
 
+	system.time({test <- testing(impressions.sequential)}) #~624.965
+	test.result <- getRegret(test)
+	test.summary <- getSummaryTable(test.result)
+	test.plot <- getPlotData(test.result)
+	ggplot(test.plot, aes(x = variable, y = value)) + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim=c(0, 0.025))
+
 	summary(data.result)
 }
 
@@ -63,7 +69,7 @@ getRegret <- function (data) {
 		r.softmax.25 = sum(softmax.25 * r),
 		r.softmax.50 = sum(softmax.50 * r),
 		r.softmix.25 = sum(softmix.25 * r),
-		r.softmix.50 = sum(softmix.50 * r),
+		r.softmix.5 = sum(softmix.5 * r),
 		r.ucb = sum(ucb * r),
 		r.ucb.tuned = sum(ucb.tuned * r),
 		r.thompson = sum(thompson * r)
@@ -79,7 +85,7 @@ getRegret <- function (data) {
 		regret.softmax.25 = r.optimal - r.softmax.25,
 		regret.softmax.50 = r.optimal - r.softmax.50,
 		regret.softmix.25 = r.optimal - r.softmix.25,
-		regret.softmix.50 = r.optimal - r.softmix.50,
+		regret.softmix.5 = r.optimal - r.softmix.5,
 		regret.ucb = r.optimal - r.ucb,
 		regret.ucb.tuned = r.optimal - r.ucb.tuned,
 		regret.thompson = r.optimal - r.thompson
@@ -95,7 +101,7 @@ getRegret <- function (data) {
 		relative.softmax.25 = regret.softmax.25/r.optimal,
 		relative.softmax.50 = regret.softmax.50/r.optimal,
 		relative.softmix.25 = regret.softmix.25/r.optimal,
-		relative.softmix.50 = regret.softmix.50/r.optimal,
+		relative.softmix.5 = regret.softmix.5/r.optimal,
 		relative.ucb = regret.ucb/r.optimal,
 		relative.ucb.tuned = regret.ucb.tuned/r.optimal,
 		relative.thompson = regret.thompson/r.optimal
@@ -109,7 +115,7 @@ getPlotData <- function(data) {
 	id.columns = c("group_id", "day.campaign")
 	measures = c("regret.equal", "regret.greedy", "regret.egreedy.01", "regret.egreedy.05", 
 	"regret.egreedy.decreasing.1", "regret.egreedy.decreasing.10", "regret.softmax.25", 
-	"regret.softmax.50", "regret.softmix.25", "regret.softmix.50", "regret.ucb", 
+	"regret.softmax.50", "regret.softmix.25", "regret.softmix.5", "regret.ucb", 
 	"regret.ucb.tuned", "regret.thompson")
 	data.plot = melt(data, id.vars = id.columns, measure.vars = measures)
 	return (data.plot)
@@ -121,7 +127,7 @@ getTimeData <- function(data) {
 	id.columns = c("day.campaign")
 	measures = c("regret.equal", "regret.greedy", "regret.egreedy.01", "regret.egreedy.05", 
 	"regret.egreedy.decreasing.1", "regret.egreedy.decreasing.10", "regret.softmax.25", 
-	"regret.softmax.50", "regret.softmix.25", "regret.softmix.50", "regret.ucb", 
+	"regret.softmax.50", "regret.softmix.25", "regret.softmix.5", "regret.ucb", 
 	"regret.ucb.tuned", "regret.thompson")
 	data.plot = melt(
 		data.cumulative, id.vars = id.columns, measure.vars = measures, variable.name = "variable")

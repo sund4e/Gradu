@@ -12,20 +12,20 @@ getOptimalWeight <- function(data, column) {
 }
 
 # Input keys: day.campign & id
-getGreedyWeight <- function(data) {
+getGreedyWeight <- function(data, avrg.column = 'r.avrg.greedy') {
 	temp <- copy(data)
 	setkey(temp, day.adset)
-	temp[, weight := getOptimalWeight(.SD, 'r.avrg.greedy')]
+	temp[, weight := getOptimalWeight(.SD, avrg.column)]
 	setkey(temp, day.campaign, id)
   return(temp[, weight])
 }
 
 # Input keys: day.adset
 addWeight <- function(data, column, column.true, column.false) {
-	max.column = paste(column, 'max', sep='.')
+	data[, max := max(get(column)), by=.(group_id, day.campaign)]
 	data[, weight := get(column.false)]
-  data[get(column) == get(max.column), weight := get(column.true)]
-  data[get(max.column) == 0, weight := w.equal]
+  data[get(column) == max, weight := get(column.true)]
+  data[max == 0, weight := w.equal]
 	data[.(1), weight := w.equal]
 }
 
@@ -37,19 +37,19 @@ getEpsilonGreedyWeight <- function(data, epsilon) {
 	return (temp[, weight])
 }
 
-getDecreasingEpsilonGreedyWeight <- function(data, constant) {
+getDecreasingEpsilonGreedyWeight <- function(data, constant, avrg.column = 'r.avrg') {
 	temp <- copy(data)
 	temp[, c := constant]
 	temp[, epsilon := constant/day.campaign]
 	temp[epsilon > 1, epsilon := 1]
 	temp[, exploration.weight := epsilon * (w.allocable / n.allocable)]
 	temp[, exploitation.weight := {1 - epsilon} * w.allocable + exploration.weight]
-	addWeight(temp, 'r.avrg', 'exploitation.weight', 'exploration.weight')
+	addWeight(temp, avrg.column, 'exploitation.weight', 'exploration.weight')
 	return (temp[, weight])
 }
 
-getProbabilityWeights <- function(data) {
-	data[!.(1), exp := exp(r.avrg/temperature)]
+getProbabilityWeights <- function(data, avrg.column = 'r.avrg') {
+	data[!.(1), exp := exp(get(avrg.column)/temperature)]
 	data[!.(1), exp.sum := sum(exp), by=.(group_id, day.campaign)]
   data[!.(1), weight := w.allocable * exp/exp.sum]
   data[.(1), weight := w.equal]
@@ -62,17 +62,23 @@ getSoftMaxWeight <- function(data, tau) {
   return(getProbabilityWeights(temp))
 }
 
-getSoftMixWeight <- function(data, tau) {
+getSoftMixWeight <- function(data, tau, avrg.column) {
 	temp <- copy(data)
 	temp[, temperature := tau * log(day.campaign)/day.campaign]
-  return(getProbabilityWeights(temp))
+	temp[, weight := getProbabilityWeights(temp, avrg.column)]
+	# When tau -> 0, converges greedy policy
+	# For small enough tau the exp becomes infinitive, replace these with greedy policy 
+	if(length(temp[is.na(weight)]) > 0) {
+		temp[is.na(weight), weight := getGreedyWeight(.SD, avrg.column)]
+	} 
+  return()
 }
 
-getWeightWithCI <- function(data) {
+getWeightWithCI <- function(data, avrg.column = 'r.avrg') {
 	temp <- copy(data)
 	temp[, `:=` (
-		ucb = r.avrg + ci,
-		lcb = r.avrg - ci
+		ucb = get(avrg.column) + ci,
+		lcb = get(avrg.column) - ci
 	)]
 	temp[, lcb.max := max(lcb), by=.(group_id, day.campaign)]
 	temp[, surviving := ucb >= lcb.max]
@@ -82,12 +88,12 @@ getWeightWithCI <- function(data) {
 	return (temp[, weight])
 }
 
-getUCBWeight <- function(data) {
+getUCBWeight <- function(data, avrg.column) {
 	temp <- copy(data)
 	setkey(temp, day.adset)
 	temp[, ci := 0]
-	temp[!.(1), ci := sqrt((2 * ln.spend)/sum.spend.ucb)]
-	temp[!.(1), weight := getWeightWithCI(.SD)]
+	temp[!.(1), ci := sqrt((2 * ln.spend)/spend.ucb)]
+	temp[!.(1), weight := getWeightWithCI(.SD, avrg.column)]
 	temp[.(1), weight := w.equal]
 	setkey(temp, day.campaign, id)
 	return (temp[, weight])
@@ -95,20 +101,20 @@ getUCBWeight <- function(data) {
 
 getTunedConfidenceInterval <- function(data) {
 	temp <- copy(data)
-	temp[, ci.variance := sqrt((2 * ln.spend)/sum.spend.ucb.tuned)]
+	temp[, ci.variance := sqrt((2 * ln.spend)/spend.ucb.tuned)]
 	temp[, V := r.variance + ci.variance]
 	temp[, multiplier := 1/4]
 	temp[V < multiplier, multiplier := V]
-	temp[, ci := sqrt((ln.time/sum.spend.ucb.tuned)*multiplier)]
+	temp[, ci := sqrt((ln.time/spend.ucb.tuned)*multiplier)]
 	return(temp[, ci])
 }
 
-getUCBTunedWeight <- function(data) {
+getUCBTunedWeight <- function(data, avrg.column) {
 	temp <- copy(data)
 	setkey(temp, day.adset)
 	temp[, ci := 0]
 	temp[!.(1, 2), ci := getTunedConfidenceInterval(.SD)]
-	temp[!.(1, 2), weight := getWeightWithCI(.SD)]
+	temp[!.(1, 2), weight := getWeightWithCI(.SD, avrg.column)]
 	temp[.(1, 2), weight := w.equal]
 	setkey(temp, day.campaign, id)
 	return (temp[, weight])
@@ -118,7 +124,7 @@ sampleBest <- function(data, rep) {
 	temp <- copy(data)
 	temp[, best.count := 0]
 	for(i in 1:rep) {
-		temp[, r.sample := rgamma(1, shape=sum.r.count, scale=1/sum.spend.thompson), by=.(id)]
+		temp[, r.sample := rgamma(1, shape=conversions.thompson, scale=1/spend.thompson), by=.(id)]
 		temp[, max := max(r.sample), by=.(group_id, day.campaign)]
 		temp[r.sample == max, best.count := best.count + 1]
 	}

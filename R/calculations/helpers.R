@@ -47,6 +47,7 @@ getReturnVariance <- function (data) {
 
 
 # Greedy may end up allocating over 1 when the adsets are avaluated equally good
+# (i.e. maximum is 0)
 # Quicker to do the data cleanup afterwards
 getCorrectedGreedy <- function (data) {
 	temp <- copy(data)

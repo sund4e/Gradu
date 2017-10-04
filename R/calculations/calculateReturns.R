@@ -8,7 +8,7 @@ calculateReturns <- function (dataTable) {
 	epsilon01 = 0.1
 	c1 = 1
 	c10 = 10
-	tau1 = 1
+	tau25 = 25
 	tau5 = 5
 
 	data <- copy(dataTable)
@@ -26,10 +26,10 @@ calculateReturns <- function (dataTable) {
 
 	cat("Calculating returns for probability matching... ")
 	setkey(data, day.adset)
-	data[, softmax.1 := getSoftMaxWeight(.SD, tau1)]
-	data[, softmax.5 := getSoftMaxWeight(.SD, tau5)]
-	data[, softmix.1 := getSoftMixWeight(.SD, tau1)]
-	data[, softmix.5 := getSoftMixWeight(.SD, tau5)]
+	data[, softmax.25 := getSoftMaxWeight(.SD, tau25)]
+	data[, softmax.50 := getSoftMaxWeight(.SD, tau5)]
+	data[, softmix.25 := getSoftMixWeight(.SD, tau25)]
+	data[, softmix.50 := getSoftMixWeight(.SD, tau5)]
 	cat("\u2713\n")
 
 	cat("Calculating returns for UCB and Thompson... \n")
@@ -94,6 +94,115 @@ calculateReturns <- function (dataTable) {
 
 	print(data)
 	return (data)
+}
+
+testing <- function(dataTable) {
+	budget <- 100
+	epsilon05 = 0.5
+	epsilon01 = 0.1
+	c1 = 1
+	c10 = 10
+	tau25 = 25
+	tau5 = 5
+
+	data <- copy(dataTable)
+	data <- getRunningDays(data)
+	calculateInitalColumns(data, budget)
+	calculateReturnsForStaticAlgorithms(data, epsilon01, epsilon05, tau25, tau5)
+
+	weights = c(
+		"greedy", 
+		"egreedy.decreasing.1", 
+		"egreedy.decreasing.10",
+		"softmix.25",
+		"softmix.5", 
+		"ucb",
+		"ucb.tuned",
+		"thompson"
+	)
+	returns = paste("r", weights,  sep=".") # return visible for algorithm
+	counts = paste("count", weights,  sep=".") # 1 if has allocation, 0 otherwise
+	avrgs = paste("avrg", weights,  sep=".") # average return visible for algorithm
+	spends = paste("spend", weights,  sep=".") # cumulative spend for algorithm
+	conversions = paste("conversions", weights,  sep=".") # cumulative conversions for algorithm
+	temps = paste("temp", weights,  sep=".") # temp column
+
+	data[, (weights) := 0]
+	data[, (returns) := 0]
+	data[, (counts) := 0]
+
+	cat("Calculating returns for UCB and Thompson... \n")
+	setkey(data, day.campaign, id)
+	days <- max(data$day.campaign)
+	for(i in 1:days) {
+		data[, (temps) := sum(get(returns))/sum(get(counts)), by = .(id)]
+		data[.(i), (avrgs) := get(temps)]
+		data[, (temps) := sum(get(weights) * budget), by = .(id)]
+		data[.(i), (spends) := get(temps)]
+		data[.(i), (conversions) := get(avrgs) * get(spends)]
+
+		data[.(i), `:=` (
+			greedy = getGreedyWeight(.SD, "avrg.greedy"),
+			egreedy.decreasing.1 = getDecreasingEpsilonGreedyWeight(.SD, c1, "avrg.egreedy.decreasing.1"),
+			egreedy.decreasing.10 = getDecreasingEpsilonGreedyWeight(.SD, c10, "avrg.egreedy.decreasing.10"),
+			softmix.25 = getSoftMixWeight(.SD, tau25, "avrg.softmix.25"),
+			softmix.5 = getSoftMixWeight(.SD, tau5, "avrg.softmix.5"),
+			ucb = getUCBWeight(.SD, "avrg.ucb"),
+			ucb.tuned = getUCBTunedWeight(.SD, "avrg.ucb.tuned"),
+			thompson = getThompsonWeight(.SD)
+		)]
+
+		data[.(i), (weights) := round(.SD, 2), .SDcols = weights] #Prevent allocating infinitely small amount
+		data[.(i), (counts) := ceiling(.SD), .SDcols = weights]
+		data[.(i), (returns) := lapply(.SD, "*", data[.(i), r]), .SDcols = weights]
+
+		for(col in seq_along(weights)) {
+			set(data, i=)
+		}
+		
+		# Log progress to console
+		if(i %% 100  == 0 ) {
+			cat("(", floor(i/days * 100), "% ) \n", sep="");
+		} else {
+			cat(".")
+		}
+	}
+	cat("(100%) \n")
+
+	data[, greedy := getCorrectedGreedy(.SD)]
+	return(data)
+}
+
+roundWeights <- function(data) {
+	rounded <- data[, lapply(.SD, round, digits = 2)]
+	return(rounded)
+}
+
+calculateReturnsForStaticAlgorithms <- function(data, epsilon01, epsilon05, tau25, tau5) {
+	cat("Calculating returns for static algorithms... ")
+	setkey(data, day.adset)
+	data[, optimal := getOptimalWeight(.SD, 'r')]
+	data[, egreedy.01 := getEpsilonGreedyWeight(.SD, epsilon01)]
+	data[, egreedy.05 := getEpsilonGreedyWeight(.SD, epsilon05)]
+	data[, softmax.25 := getSoftMaxWeight(.SD, tau25)]
+	data[, softmax.50 := getSoftMaxWeight(.SD, tau5)]
+	cat("\u2713\n")
+}
+
+calculateInitalColumns <- function(data, budget) {
+	cat("Calculating initial columns... ")
+	setkey(data, day.adset)
+	data[, w.equal := 1/.N, by=.(group_id, day.campaign)]
+	data[!.(1), n.allocable := .N, by=.(group_id, date)]
+	data[, w.allocable := getAllocableWeight(.SD)]
+	data[, budget := budget]
+	data[, r.avrg := getAverageReturn(.SD)]
+
+	#Init columns for UCB
+	data[, ln.spend := log(budget * (day.campaign-1))]
+	data[, ln.time := log(day.campaign)]
+	data[, r.variance := getReturnVariance(.SD)]
+	cat("\u2713\n")
 }
 
 getRunningDays <- function(data) {
