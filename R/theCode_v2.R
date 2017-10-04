@@ -35,8 +35,14 @@ runCode <- function() {
 	ggplot(conversions.plot, aes(x = variable, y = value)) + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim=c(0, 0.025))
 	ggplot(conversions.time, aes(x = day.campaign, y = log(value), color = variable)) + geom_line()
 
+	impressions.returns <- calculateReturns(impressions.sequential)
+	clicks.returns <- calculateReturns(clicks.sequential)
+	conversions.returns <- calculateReturns(conversions.sequential)
+
+	impressions.result <- getRegret(impressions.returns)
+	clicks.result <- getRegret(clicks.returns)
+	conversions.result <- getRegret(conversions.returns)
 	result <- combineResults(impressions.result, clicks.result, conversions.result)
-	summary <- getSummaryTable(result)
 
 	data.result.avrg = data.result[, lapply(.SD, mean), by=group_id]
 	data.result.avrg = data.result[, lapply(.SD, mean), by=day.campaign]
@@ -80,19 +86,19 @@ getRegret <- function (data) {
 	)]
 
 	data.campaigns[, `:=` (
-		regret.relative.equal = regret.equal/r.optimal,
-		regret.relative.greedy = regret.greedy/r.optimal,
-		regret.relative.egreedy.01 = regret.egreedy.01/r.optimal,
-		regret.relative.egreedy.05 = regret.egreedy.05/r.optimal,
-		regret.relative.egreedy.decreasing.1 = regret.egreedy.decreasing.1/r.optimal,
-		regret.relative.egreedy.decreasing.10 = regret.egreedy.decreasing.10/r.optimal,
-		regret.relative.softmax.25 = regret.softmax.25/r.optimal,
-		regret.relative.softmax.50 = regret.softmax.50/r.optimal,
-		regret.relative.softmix.25 = regret.softmix.25/r.optimal,
-		regret.relative.softmix.50 = regret.softmix.50/r.optimal,
-		regret.relative.ucb = regret.ucb/r.optimal,
-		regret.relative.ucb.tuned = regret.ucb.tuned/r.optimal,
-		regret.relative.thompson = regret.thompson/r.optimal
+		relative.equal = regret.equal/r.optimal,
+		relative.greedy = regret.greedy/r.optimal,
+		relative.egreedy.01 = regret.egreedy.01/r.optimal,
+		relative.egreedy.05 = regret.egreedy.05/r.optimal,
+		relative.egreedy.decreasing.1 = regret.egreedy.decreasing.1/r.optimal,
+		relative.egreedy.decreasing.10 = regret.egreedy.decreasing.10/r.optimal,
+		relative.softmax.25 = regret.softmax.25/r.optimal,
+		relative.softmax.50 = regret.softmax.50/r.optimal,
+		relative.softmix.25 = regret.softmix.25/r.optimal,
+		relative.softmix.50 = regret.softmix.50/r.optimal,
+		relative.ucb = regret.ucb/r.optimal,
+		relative.ucb.tuned = regret.ucb.tuned/r.optimal,
+		relative.thompson = regret.thompson/r.optimal
 	)]
 
 	data.campaigns = data.campaigns[day.campaign > 1]
@@ -123,42 +129,38 @@ getTimeData <- function(data) {
 }
 
 combineResults <- function(impressions.result, clicks.result, conversions.result) {
-	impressions <- getWithRewardType(impressions.result, "Impressions")
-	clicks <- getWithRewardType(clicks.result, "Clicks")
-	conversions <- getWithRewardType(conversions.result, "Conversions")
-	combined <- rbindlist(list(impressions, clicks, conversions))
-}
-
-getWithRewardType <- function(dataTable, rewardType) {
-	data <- copy(dataTable)
-	data[, reward := rewardType]
-	setkey(data, day.campaign, group_id, reward)
-	return (data)
+	impressions <- getSummaryTable(impressions.result)
+	clicks <- getSummaryTable(clicks.result)
+	conversions <- getSummaryTable(conversions.result)
+	combined <- impressions[clicks][conversions]
 }
 
 getSummaryTable <- function(data) {
 	temp <- copy(data)
-	average <- getSummary(temp, mean)
-	stdev <- getSummary(temp, sd)
-	summary <- average[stdev]
-	# summary.rounded <- summary[, lapply(.SD, round, digits = 3), by =Algorithm, .SDcols = -c("Algorithm")]
+	average <- getAggregate(temp, mean, "Average")
+	stdev <- getAggregate(temp, sd, "SD")
+	combined <- rbindlist(list(average, stdev))
+	transposed <- getTranspose(combined)
+	summary <- getRelevantColumns(transposed)
 	return (summary)
 }
 
-getSummary <- function(data, fun) {
-	aggregated <- data[, lapply(.SD, fun, na.rm = TRUE), keyby=reward, .SDcols = -c("group_id")]
-	summary <- getTranspose(aggregated)
+getAggregate <- function(data, fun, metric.name) {
+	aggregated <- data[, lapply(.SD, fun, na.rm = TRUE), .SDcols = -c("group_id")]
+	aggregated[, metric := metric.name]
+	return(aggregated)
 }
 
 getTranspose <- function(dataTable) {
   row.names = names(dataTable)
-	columns.numeric = dataTable[, reward]
+	columns.numeric = dataTable[, metric]
 	col.names = c(columns.numeric, "Algorithm")
   data.transpose = transpose(dataTable)
 	data.transpose[, "Algorithm" := row.names]
   setnames(data.transpose, col.names)
-	data.transpose = data.transpose[-1,] #remove rows for names
-  setcolorder(data.transpose, rev(col.names))
+	data.transpose = data.transpose[-1,] #remove first row containing day.campaign
+	data.transpose = data.transpose[-.N] #remove last row containing metric
+  setcolorder(data.transpose, c("Algorithm", "Average", "SD"))
 	
 	data.transpose = roundNumers(data.transpose, columns.numeric)
 	setkey(data.transpose, Algorithm)
@@ -169,4 +171,19 @@ roundNumers <- function(data, columns.numeric) {
 	data[, columns.numeric] = data[, lapply(.SD, as.numeric), .SDcols = -c("Algorithm")]
 	data[, columns.numeric] = data[, lapply(.SD, round, digits = 3), .SDcols = -c("Algorithm")]
 	return (data)
+}
+
+getRelevantColumns <- function(data.transposed) {
+	regret <- data.transposed[Algorithm %like% "^regret"]
+	relative <- data.transposed[Algorithm %like% "^relative"][, SD := NULL]
+	parseAlgorithm(regret)
+	parseAlgorithm(relative)
+	data <- relative[regret]
+	setnames(data, c("Algorithm", "Relative", "Average", "SD"))
+	return(data)
+}
+
+parseAlgorithm <- function(data) {
+	data[, Algorithm := gsub("^\\w+\\.", "", Algorithm)]
+	setkey(data, Algorithm)
 }
