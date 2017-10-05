@@ -49,11 +49,12 @@ getDecreasingEpsilonGreedyWeight <- function(data, constant, avrg.column = 'r.av
 }
 
 getProbabilityWeights <- function(data, avrg.column = 'r.avrg') {
-	data[!.(1), exp := exp(get(avrg.column)/temperature)]
-	data[!.(1), exp.sum := sum(exp), by=.(group_id, day.campaign)]
-  data[!.(1), weight := w.allocable * exp/exp.sum]
-  data[.(1), weight := w.equal]
-	return(data[, weight])
+	temp <- copy(data)
+	temp[!.(1), exp := exp(get(avrg.column)/temperature)]
+	temp[!.(1), exp.sum := sum(exp), by=.(group_id, day.campaign)]
+  temp[!.(1), weight := w.allocable * exp/exp.sum]
+  temp[.(1), weight := w.equal]
+	return(temp[, weight])
 }
 
 getSoftMaxWeight <- function(data, tau) {
@@ -64,17 +65,17 @@ getSoftMaxWeight <- function(data, tau) {
 
 getSoftMixWeight <- function(data, tau, avrg.column) {
 	temp <- copy(data)
+	setkey(temp, day.adset)
 	temp[, temperature := tau * log(day.campaign)/day.campaign]
 	temp[, weight := getProbabilityWeights(temp, avrg.column)]
 	# When tau -> 0, converges greedy policy
 	# For small enough tau the exp becomes infinitive, replace these with greedy policy 
-	if(length(temp[is.na(weight)]) > 0) {
-		temp[is.na(weight), weight := getGreedyWeight(.SD, avrg.column)]
-	} 
-  return()
+	temp[is.na(weight), weight := getGreedyWeight(.SD, avrg.column)]
+	setkey(temp, day.campaign, id)
+  return(temp[, weight])
 }
 
-getWeightWithCI <- function(data, avrg.column = 'r.avrg') {
+getWeightWithCI <- function(data, avrg.column) {
 	temp <- copy(data)
 	temp[, `:=` (
 		ucb = get(avrg.column) + ci,
