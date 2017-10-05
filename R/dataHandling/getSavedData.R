@@ -37,6 +37,7 @@ crunchData <- function(dataframe) {
 	data <- data[days_of_data >= 30] # Exclude ad sets with less than 30 days of data
 	data[, adsets_in_campaign:=.N, by=.(group_id, date)]
 	data <- data[adsets_in_campaign > 1] #Filter out day rows when campaign has only one ad set
+	data <- data[adsets_in_campaign < 100] #Filter out day rows when campaign has over 100 ad sets
 	data[, days_of_data_campaign:=length(unique(date)), by=.(group_id)]
 	data <- data[days_of_data_campaign >= 30] # Exclude campaigns with less than 30 days of data
 

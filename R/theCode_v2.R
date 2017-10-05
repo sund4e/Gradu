@@ -1,7 +1,8 @@
 require(data.table)
 require(ggplot2)
 require(rbenchmark)
-require(RcppRoll)
+library(pryr)
+library(profvis)
 # source(here("R", "dataHandling", "getSavedData.R"), chdir=T)
 source("R/dataHandling/getSavedData.R")
 source("R/dataHandling/getSimulatedData.R")
@@ -11,15 +12,22 @@ source("R/calculations/calculateReturns.R")
 #Run code -----------------------
 runCode <- function() {
 	data <- getSavedData()
+
+	#getSequential data
+	impressions.sequential <- getSequentialData(data, "impressions_cr")
+	clicks.sequential <- getSequentialData(data, "clicks_cr")
+	conversions.sequential <- getSequentialData(data, "conversions_cr")
 	
 	#Sequential experiment---
 	impressions.sequential <- getSequentialData(data, "impressions_cr")
-	impressions.returns <- calculateReturns(impressions.sequential)
-	impressions.result <- getRegret(impressions.returns)
+	impressions.weights <- calculateReturns(impressions.sequential)
+	impressions.result <- getRegret(impressions.weights)
+	impressions.summary <- getSummaryTable(impressions.result)
 	impressions.plot <- getPlotData(impressions.result)
 	impressions.time <- getTimeData(impressions.result)
-	ggplot(impressions.plot, aes(x = variable, y = value)) + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim=c(0,8))
-	ggplot(impressions.time, aes(x = day.campaign, y = value, color = variable)) + geom_line()
+	ggplot(impressions.plot, aes(x = algorithm, y = value)) + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim=c(0,8))
+	ggplot(impressions.time, aes(x = day.campaign, y = value, color = algorithm)) + geom_line()
+	ggplot(impressions.time, aes(x = day.campaign, y = cumulative, color = algorithm)) + geom_line() + coord_cartesian(ylim=c(0, 100000))
 
 	clicks.sequential <- getSequentialData(data, "clicks_cr")
 	clicks.returns <- calculateReturns(clicks.sequential)
@@ -48,10 +56,22 @@ runCode <- function() {
 	data.result.avrg = data.result[, lapply(.SD, mean), by=day.campaign]
 
 	system.time({test <- testing(impressions.sequential)}) #~624.965
+	data <- getSavedData()
+	impressions.sequential <- getSequentialData(data, "impressions_cr")
 	test.result <- getRegret(test)
 	test.summary <- getSummaryTable(test.result)
 	test.plot <- getPlotData(test.result)
 	ggplot(test.plot, aes(x = variable, y = value)) + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim=c(0, 0.025))
+	test <- testing(impressions.sequential[group_id == "5527905fd1a561f72d8b456c"])
+
+	#Fix these
+	#impressions.weights[group_id == "56b858a7f789b891048b456f"][day.campaign == 2]
+	#sum of weights always 1 (especially greedy)
+	#equal allocations correct (sum = 1)
+	# impressions.weights[group_id == "5541b3c7d1a5612e548b458a"]
+	# optimal broken: [group_id == "5527905fd1a561f72d8b456c"]
+
+	# impressions.returns[group_id == "56d5a4d7f789b8ef188b4592"]
 
 	summary(data.result)
 }
@@ -67,7 +87,7 @@ getRegret <- function (data) {
 		r.egreedy.decreasing.1 = sum(egreedy.decreasing.1 * r),
 		r.egreedy.decreasing.10 = sum(egreedy.decreasing.10 * r),
 		r.softmax.25 = sum(softmax.25 * r),
-		r.softmax.50 = sum(softmax.50 * r),
+		r.softmax.5 = sum(softmax.5 * r),
 		r.softmix.25 = sum(softmix.25 * r),
 		r.softmix.5 = sum(softmix.5 * r),
 		r.ucb = sum(ucb * r),
@@ -83,7 +103,7 @@ getRegret <- function (data) {
 		regret.egreedy.decreasing.1 = r.optimal - r.egreedy.decreasing.1,
 		regret.egreedy.decreasing.10 = r.optimal - r.egreedy.decreasing.10,
 		regret.softmax.25 = r.optimal - r.softmax.25,
-		regret.softmax.50 = r.optimal - r.softmax.50,
+		regret.softmax.5 = r.optimal - r.softmax.5,
 		regret.softmix.25 = r.optimal - r.softmix.25,
 		regret.softmix.5 = r.optimal - r.softmix.5,
 		regret.ucb = r.optimal - r.ucb,
@@ -99,7 +119,7 @@ getRegret <- function (data) {
 		relative.egreedy.decreasing.1 = regret.egreedy.decreasing.1/r.optimal,
 		relative.egreedy.decreasing.10 = regret.egreedy.decreasing.10/r.optimal,
 		relative.softmax.25 = regret.softmax.25/r.optimal,
-		relative.softmax.50 = regret.softmax.50/r.optimal,
+		relative.softmax.5 = regret.softmax.5/r.optimal,
 		relative.softmix.25 = regret.softmix.25/r.optimal,
 		relative.softmix.5 = regret.softmix.5/r.optimal,
 		relative.ucb = regret.ucb/r.optimal,
@@ -115,7 +135,7 @@ getPlotData <- function(data) {
 	id.columns = c("group_id", "day.campaign")
 	measures = c("regret.equal", "regret.greedy", "regret.egreedy.01", "regret.egreedy.05", 
 	"regret.egreedy.decreasing.1", "regret.egreedy.decreasing.10", "regret.softmax.25", 
-	"regret.softmax.50", "regret.softmix.25", "regret.softmix.5", "regret.ucb", 
+	"regret.softmax.5", "regret.softmix.25", "regret.softmix.5", "regret.ucb", 
 	"regret.ucb.tuned", "regret.thompson")
 	data.plot = melt(data, id.vars = id.columns, measure.vars = measures)
 	return (data.plot)
@@ -123,14 +143,15 @@ getPlotData <- function(data) {
 
 getTimeData <- function(data) {
 	data.excl <- data[, setdiff(names(data), c("group_id")), with = FALSE]
-	data.cumulative <- data.excl[, lapply(.SD, sum), by=day.campaign]
+	data.day <- data.excl[, lapply(.SD, sum), by=day.campaign]
 	id.columns = c("day.campaign")
 	measures = c("regret.equal", "regret.greedy", "regret.egreedy.01", "regret.egreedy.05", 
 	"regret.egreedy.decreasing.1", "regret.egreedy.decreasing.10", "regret.softmax.25", 
-	"regret.softmax.50", "regret.softmix.25", "regret.softmix.5", "regret.ucb", 
+	"regret.softmax.5", "regret.softmix.25", "regret.softmix.5", "regret.ucb", 
 	"regret.ucb.tuned", "regret.thompson")
 	data.plot = melt(
-		data.cumulative, id.vars = id.columns, measure.vars = measures, variable.name = "variable")
+		data.day, id.vars = id.columns, measure.vars = measures, variable.name = "algorithm")
+	data.plot[, cumulative := cumsum(value), by=algorithm]
 	return (data.plot)
 }
 
