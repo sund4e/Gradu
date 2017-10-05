@@ -11,6 +11,8 @@ calculateReturns <- function(dataTable) {
 	tau25 = 25
 	tau5 = 5
 
+	#impressions.weights[group_id == "572122ad1aa292590e8b4583"]day =34
+
 	data <- copy(dataTable)
 	data <- getRunningDays(data)
 	calculateInitalColumns(data, budget)
@@ -23,7 +25,8 @@ calculateReturns <- function(dataTable) {
 calculateReturnsForStaticAlgorithms <- function(data, epsilon01, epsilon05, tau25, tau5) {
 	cat("Calculating returns for static algorithms... ")
 	setkey(data, day.adset)
-	data[, optimal := getOptimalWeight(.SD, 'r')]
+	data[, zero := 0]
+	data[, optimal := getOptimalWeight(.SD, 'r', 'w.allocable', 'zero')]
 	data[, egreedy.01 := getEpsilonGreedyWeight(.SD, epsilon01)]
 	data[, egreedy.05 := getEpsilonGreedyWeight(.SD, epsilon05)]
 	data[, softmax.25 := getSoftMaxWeight(.SD, tau25)]

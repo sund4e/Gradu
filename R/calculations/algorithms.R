@@ -1,11 +1,13 @@
 require(data.table)
 
 # Input keys: day.adset
+# test <- calculateReturns(impressions.sequential[group_id == "5541b3c7d1a5612e548b458a"])
 getOptimalWeight <- function(data, column, column.true, column.false) {
 	temp <- copy(data)
 	temp[, max := 0]
   temp[!.(1), max := max(get(column)), by=.(group_id, day.campaign)]
-  temp[get(column) == max, weight := w.allocable]
+	temp[, weight := get(column.false)]
+  temp[get(column) == max, weight := get(column.true)]
   temp[max == 0, weight := w.equal]
 	temp[.(1), weight := w.equal]
 	return(temp[, weight])
@@ -65,7 +67,7 @@ getSoftMixWeight <- function(data, tau, avrg.column) {
 	temp[, weight := getProbabilityWeights(temp, avrg.column)]
 	# When tau -> 0, converges greedy policy
 	# For small enough tau the exp becomes infinitive, replace these with greedy policy 
-	temp[is.na(weight), weight := getGreedyWeight(.SD, avrg.column)]
+	temp[is.na(weight), weight := getGreedyWeight(.SD, avrg.column, 'w.allocable', 'zero')]
 	setkey(temp, day.campaign, id)
   return(temp[, weight])
 }
