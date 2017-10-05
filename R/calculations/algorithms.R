@@ -1,10 +1,10 @@
 require(data.table)
 
 # Input keys: day.adset
-getOptimalWeight <- function(data, column) {
+getOptimalWeight <- function(data, column, column.true, column.false) {
 	temp <- copy(data)
-	temp[, max := getMaxForDay(.SD, column)]
-	temp[, weight := 0]
+	temp[, max := 0]
+  temp[!.(1), max := max(get(column)), by=.(group_id, day.campaign)]
   temp[get(column) == max, weight := w.allocable]
   temp[max == 0, weight := w.equal]
 	temp[.(1), weight := w.equal]
@@ -12,39 +12,34 @@ getOptimalWeight <- function(data, column) {
 }
 
 # Input keys: day.campign & id
-getGreedyWeight <- function(data, avrg.column = 'r.avrg.greedy') {
+getGreedyWeight <- function(data, avrg.column = 'avrg.greedy') {
 	temp <- copy(data)
 	setkey(temp, day.adset)
-	temp[, weight := getOptimalWeight(.SD, avrg.column)]
+	temp[, exploration.weight := 1]
+	temp[, exploitation.weight := 0]
+	temp[, weight := getOptimalWeight(.SD, avrg.column, 'exploration.weight', 'exploitation.weight')]
 	setkey(temp, day.campaign, id)
   return(temp[, weight])
 }
 
-# Input keys: day.adset
-addWeight <- function(data, column, column.true, column.false) {
-	data[, max := max(get(column)), by=.(group_id, day.campaign)]
-	data[, weight := get(column.false)]
-  data[get(column) == max, weight := get(column.true)]
-  data[max == 0, weight := w.equal]
-	data[.(1), weight := w.equal]
-}
-
-getEpsilonGreedyWeight <- function(data, epsilon) {
+getEpsilonGreedyWeight <- function(data, epsilon, avrg.column = 'r.avrg') {
 	temp <- copy(data)
 	temp[, exploration.weight := epsilon * (w.allocable / n.allocable)]
 	temp[, exploitation.weight := {1 - epsilon} * w.allocable + exploration.weight]
-	addWeight(temp, 'r.avrg', 'exploitation.weight', 'exploration.weight')
+	temp[, weight := getOptimalWeight(.SD, avrg.column, 'exploitation.weight', 'exploration.weight')]
 	return (temp[, weight])
 }
 
-getDecreasingEpsilonGreedyWeight <- function(data, constant, avrg.column = 'r.avrg') {
+getDecreasingEpsilonGreedyWeight <- function(data, constant, avrg.column) {
 	temp <- copy(data)
+	setkey(temp, day.adset)
 	temp[, c := constant]
 	temp[, epsilon := constant/day.campaign]
 	temp[epsilon > 1, epsilon := 1]
 	temp[, exploration.weight := epsilon * (w.allocable / n.allocable)]
 	temp[, exploitation.weight := {1 - epsilon} * w.allocable + exploration.weight]
-	addWeight(temp, avrg.column, 'exploitation.weight', 'exploration.weight')
+	temp[, weight := getOptimalWeight(.SD, avrg.column, 'exploitation.weight', 'exploration.weight')]
+	setkey(temp, day.campaign, id)
 	return (temp[, weight])
 }
 
