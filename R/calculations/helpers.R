@@ -14,7 +14,7 @@ getAverageReturn <- function (data) {
 getAllocableWeight <- function (data) {
   temp <- copy(data)
   temp[, w.allocable := 0]
-  temp[!.(1), w.allocable := sum(w.equal), by=.(group_id, date)]
+  temp[!.(1), w.allocable := sum(equal), by=.(group_id, date)]
   return(temp[, w.allocable])
 }
 
@@ -52,6 +52,6 @@ getReturnVariance <- function (data) {
 getCorrectedGreedy <- function (data) {
 	temp <- copy(data)
 	temp[, total.greedy := sum(greedy), by = .(group_id, day.campaign)]
-	temp[total.greedy > 0 & greedy == w.allocable, greedy := w.allocable / n.allocable]
+	temp[total.greedy > 1 & greedy == w.allocable, greedy := w.allocable / n.allocable]
 	return (temp[, greedy])
 }

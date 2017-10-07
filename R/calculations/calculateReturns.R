@@ -10,26 +10,23 @@ calculateReturns <- function(dataTable) {
 	c10 = 10
 	tau25 = 25
 	tau5 = 5
-	precision = 2 #digits to which the allocations are rounded
 
 	data <- copy(dataTable)
 	data <- getRunningDays(data)
-	calculateInitalColumns(data, budget, precision)
-	calculateReturnsForStaticAlgorithms(data, precision, epsilon01, epsilon05, tau25, tau5)
-	calculateReturnsForDynamicAlgorithms(data, budget, precision, epsilon01, epsilon05, c1, c10, tau25, tau5)
-	data[, greedy := getCorrectedGreedy(.SD)]
+	calculateInitalColumns(data, budget)
+	calculateReturnsForStaticAlgorithms(data, epsilon01, epsilon05, tau25, tau5)
+	calculateReturnsForDynamicAlgorithms(data, budget, epsilon01, epsilon05, c1, c10, tau25, tau5)
 	return(data)
 }
 
-calculateReturnsForStaticAlgorithms <- function(data, precision, epsilon01, epsilon05, tau25, tau5) {
+calculateReturnsForStaticAlgorithms <- function(data, epsilon01, epsilon05, tau25, tau5) {
 	cat("Calculating optimal returns... ")
 	setkey(data, day.campaign, id)
 	data[, optimal := getGreedyWeight(.SD, 'r')]
-	# data[, optimal := round(optimal, precision)]
 	cat("\u2713\n")
 }
 
-calculateReturnsForDynamicAlgorithms <- function(data, budget, precision, epsilon01, epsilon05, c1, c10, tau25, tau5) {
+calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilon05, c1, c10, tau25, tau5) {
 	weights = c(
 		"greedy",
 		"egreedy.01",
@@ -83,11 +80,10 @@ calculateReturnsForDynamicAlgorithms <- function(data, budget, precision, epsilo
 		)]
 
 		data[.(i), (weights) := .SD, .SDcols = weights]
-		#Prevent allocating infinitely small amount
-		data[.(i), (counts) := ceiling(round(.SD, precision)), .SDcols = weights] 
+		#Prevent allocating infinitely small amount, minimum allocation is unit of budget
+		data[.(i), (counts) := ceiling(round(.SD, 2)), .SDcols = weights] 
 		data[.(i), (weights) := .SD * data[.(i), counts, with=FALSE], .SDcols = weights]
 
-		# data[.(i), (counts) := ceiling(.SD), .SDcols = weights]
 		data[.(i), (returns) := .SD * data[.(i), r], .SDcols = counts]
 
 		
@@ -99,16 +95,18 @@ calculateReturnsForDynamicAlgorithms <- function(data, budget, precision, epsilo
 		}
 	}
 	cat("(100%) \n")
+
+	# Fix all allocations to equal their proportion of the total allocaion for day
+	data[, (temp) := lapply(.SD, sum), by = .(group_id, day.campaign), .SDcols = weights]
+	data[, (weights) := .SD / data[, temp, with=FALSE], .SDcols = weights]
 }
  
-calculateInitalColumns <- function(data, budget, precision) {
+calculateInitalColumns <- function(data, budget) {
 	cat("Calculating initial columns... ")
 	setkey(data, day.adset)
-	data[, w.equal := 1/.N, by=.(group_id, day.campaign)]
-	# data[, w.equal := round(1/.N, precision), by=.(group_id, day.campaign)]
+	data[, equal := 1/.N, by=.(group_id, day.campaign)]
 	data[!.(1), n.allocable := .N, by=.(group_id, date)]
 	data[, w.allocable := getAllocableWeight(.SD)]
-	# data[, budget := budget]
 	data[, r.avrg := getAverageReturn(.SD)]
 
 	#Init columns for UCB

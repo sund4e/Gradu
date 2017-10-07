@@ -25,9 +25,35 @@ runCode <- function() {
 	impressions.summary <- getSummaryTable(impressions.result)
 	impressions.plot <- getPlotData(impressions.result)
 	impressions.time <- getTimeData(impressions.result)
-	ggplot(impressions.plot, aes(x = algorithm, y = value)) + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim=c(0,8))
+
+	#Plots
+	#Boxplot
+	ggplot(impressions.plot, aes(x = variable, y = value)) + geom_boxplot(outlier.shape = NA) + coord_flip()
+	
+	#Lineplot
 	ggplot(impressions.time, aes(x = day.campaign, y = value, color = algorithm)) + geom_line()
 	ggplot(impressions.time, aes(x = day.campaign, y = cumulative, color = algorithm)) + geom_line() + coord_cartesian(ylim=c(0, 100000))
+	ggplot(impressions.time, aes(x = day.campaign, y = cum.relative, color = algorithm)) + geom_line()
+	ggplot(impressions.time, aes(x = day.campaign, y = cum.relative)) + geom_line() + facet_wrap( ~ algorithm, ncol=4)
+	ggplot(impressions.time[algorithm == "egreedy.01" | algorithm == "thompson"], aes(x = day.campaign, y = relative)) + geom_line() + facet_wrap( ~ algorithm, ncol=4)
+	
+	ggplot(impressions.time, aes(x = day.campaign, y = relative)) + geom_line() + facet_wrap( ~ algorithm, ncol=4)
+
+	#Point plot
+	ggplot(impressions.plot, aes(x = day.campaign, y = regret)) + geom_point() + facet_wrap( ~ algorithm, ncol=3)
+
+	#Histogram
+	ggplot(impressions.plot, aes(x = regret)) + geom_histogram(binwidth = 0.05) + facet_wrap( ~ algorithm, ncol=3) + coord_cartesian(ylim=c(0, 10000), xlim=c(0, 3))
+	ggplot(impressions.plot, aes(x = relative)) + geom_histogram(binwidth = 0.01) + facet_wrap( ~ algorithm, ncol=4)
+
+	#TODO:
+	#Test that no algorithm has too small decimals: 
+	# impressions.weights[egreedy.01 != 0, min(egreedy.01)]
+	# impressions.weights[group_id == "560b658ff789b8f7538b4568"]
+
+	#Test why less than 0.01 allocated on 
+	#This campaig: 5541b3c7d1a5612e548b4580
+
 
 	clicks.sequential <- getSequentialData(data, "clicks_cr")
 	clicks.returns <- calculateReturns(clicks.sequential)
@@ -64,15 +90,6 @@ runCode <- function() {
 	ggplot(test.plot, aes(x = variable, y = value)) + geom_boxplot(outlier.shape = NA) + coord_cartesian(ylim=c(0, 0.025))
 	test <- testing(impressions.sequential[group_id == "5527905fd1a561f72d8b456c"])
 
-	#Fix these
-	#impressions.weights[group_id == "56b858a7f789b891048b456f"][day.campaign == 2]
-	#sum of weights always 1 (especially greedy)
-	#equal allocations correct (sum = 1)
-	# impressions.weights[group_id == "5541b3c7d1a5612e548b458a"]
-	# optimal broken: [group_id == "5527905fd1a561f72d8b456c"]
-
-	# impressions.returns[group_id == "56d5a4d7f789b8ef188b4592"]
-
 	summary(data.result)
 }
 
@@ -80,7 +97,7 @@ runCode <- function() {
 getRegret <- function (data) {
 	data.campaigns = data[, .(
 		r.optimal = sum(optimal * r),
-		r.equal = sum(w.equal * r),
+		r.equal = sum(equal * r),
 		r.greedy = sum(greedy * r),
 		r.egreedy.01 = sum(egreedy.01 * r),
 		r.egreedy.05 = sum(egreedy.05 * r),
@@ -131,27 +148,98 @@ getRegret <- function (data) {
 	return(data.campaigns)
 }
 
+removeNAs <- function(data) {
+	temp <- copy(data)
+	temp <- temp[!is.na(regret.softmix.25)][!is.na(regret.softmix.5)]
+	return(temp)
+}
+
+getRelativeRegret <- function(data.weights) {
+	data <- copy(data.weights)
+	algorithms = c("equal", "greedy", "egreedy.01", "egreedy.05", 
+	"egreedy.decreasing.1", "egreedy.decreasing.10", "softmax.25", 
+	"softmax.5", "softmix.25", "softmix.5", "ucb", 
+	"ucb.tuned", "thompson")
+	columns = c("optimal", algorithms)
+	returns = c("r.optimal", paste('r', algorithms, sep="."))
+	regrets = paste('regret', algorithms, sep=".")
+	relative = paste('relative', algorithms, sep=".")
+	sums = paste('sum', algorithms, sep=".")
+
+	data[, (returns) := .SD * data[, r], .SDcols = columns]
+	data <- data[, lapply(.SD, sum, na.rm = TRUE), by = .(group_id, day.campaign), .SDcols = returns]
+	data[, (regrets) := data[, r.optimal] - .SD, .SDcols = returns[-1]]
+	sum.regrets <- data[, lapply(.SD, sum, na.rm = TRUE), keyby=group_id, .SDcols = regrets]
+	setnames(sum.regrets, old = regrets, new = sums)
+	sum.optimal <- data[, .(sum.optimal = sum(r.optimal)), keyby=group_id]
+	avrg.regrets <- data[, lapply(.SD, mean, na.rm = TRUE), keyby=group_id, .SDcols = regrets]
+	avrg.returns <- data[, lapply(.SD, mean, na.rm = TRUE), keyby=group_id, .SDcols = returns]
+
+	data.combined = avrg.returns[avrg.regrets][sum.regrets][sum.optimal]
+	data.combined[, (relative) := .SD / data.combined[, sum.optimal], .SDcols = sums]
+
+	return (data.combined)
+}
+
 getPlotData <- function(data) {
-	id.columns = c("group_id", "day.campaign")
-	measures = c("regret.equal", "regret.greedy", "regret.egreedy.01", "regret.egreedy.05", 
-	"regret.egreedy.decreasing.1", "regret.egreedy.decreasing.10", "regret.softmax.25", 
-	"regret.softmax.5", "regret.softmix.25", "regret.softmix.5", "regret.ucb", 
-	"regret.ucb.tuned", "regret.thompson")
-	data.plot = melt(data, id.vars = id.columns, measure.vars = measures)
+	algorithms = c("equal", "greedy", "egreedy.01", "egreedy.05", 
+	"egreedy.decreasing.1", "egreedy.decreasing.10", "softmax.25", 
+	"softmax.5", "softmix.25", "softmix.5", "ucb", 
+	"ucb.tuned", "thompson")
+	# id.columns = c("group_id", "day.campaign")
+	id.columns = c("group_id")
+	columns = c('r', 'regret', 'relative')
+	r = paste(columns[1], algorithms, sep=".")
+	regret = paste(columns[2], algorithms, sep=".")
+	relative = paste(columns[3], algorithms, sep=".")
+	measures = list(r, regret, relative)
+
+	data.plot = melt(
+		data, 
+		id.vars = id.columns, 
+		measure.vars = measures, 
+		variable.name = "algorithm",
+		value.name = columns
+	)
+	data.plot[, algorithm := algorithms[algorithm]]
+
+	# aggregate on campaign level
+	data.plot <- data.plot[, lapply(.SD, mean, na.rm = TRUE), by=.(group_id, algorithm), .SDcols = columns]
+
 	return (data.plot)
 }
 
-getTimeData <- function(data) {
-	data.excl <- data[, setdiff(names(data), c("group_id")), with = FALSE]
-	data.day <- data.excl[, lapply(.SD, sum), by=day.campaign]
+removeDatesForNA <- function(data, algorithm) {
+	dates.to.remove = data.plot[algorithm == algorithm]
+}
+
+getTimeData <- function(data, correctSoftMix = FALSE) {
+	if(correctSoftMix) {
+		data <- removeNAs(data)
+	}
+	data.day <- data[, lapply(.SD, sum), by=day.campaign, .SDcols = -c("group_id")]
+
+	algorithms = c("equal", "greedy", "egreedy.01", "egreedy.05", 
+	"egreedy.decreasing.1", "egreedy.decreasing.10", "softmax.25", 
+	"softmax.5", "softmix.25", "softmix.5", "ucb", 
+	"ucb.tuned", "thompson")
 	id.columns = c("day.campaign")
-	measures = c("regret.equal", "regret.greedy", "regret.egreedy.01", "regret.egreedy.05", 
-	"regret.egreedy.decreasing.1", "regret.egreedy.decreasing.10", "regret.softmax.25", 
-	"regret.softmax.5", "regret.softmix.25", "regret.softmix.5", "regret.ucb", 
-	"regret.ucb.tuned", "regret.thompson")
+	columns = c('r', 'regret', 'relative')
+	columns.cumulative = paste('cum', columns, sep=".")
+	r = paste('r', algorithms, sep=".")
+	regret = paste('regret', algorithms, sep=".")
+	relative = paste('relative', algorithms, sep=".")
+	measures = list(r, regret, relative)
+
 	data.plot = melt(
-		data.day, id.vars = id.columns, measure.vars = measures, variable.name = "algorithm")
-	data.plot[, cumulative := cumsum(value), by=algorithm]
+		data.day, 
+		id.vars = id.columns, 
+		measure.vars = measures, 
+		variable.name = "algorithm", 
+		value.name = columns
+	)
+	data.plot[, (columns.cumulative) := lapply(.SD, cumsum), by=algorithm, .SDcols = columns]
+	data.plot[, algorithm := algorithms[algorithm]]
 	return (data.plot)
 }
 
@@ -173,7 +261,9 @@ getSummaryTable <- function(data) {
 }
 
 getAggregate <- function(data, fun, metric.name) {
-	aggregated <- data[, lapply(.SD, fun, na.rm = TRUE), .SDcols = -c("group_id")]
+	aggregated.campaign <- data[, lapply(.SD, fun, na.rm = TRUE), by = .(group_id)]
+	aggregated <- aggregated.campaign[, lapply(.SD, fun, na.rm = TRUE), .SDcols = -c("group_id")]
+	# aggregated <- data[, lapply(.SD, fun, na.rm = TRUE), .SDcols = -c("group_id")]
 	aggregated[, metric := metric.name]
 	return(aggregated)
 }

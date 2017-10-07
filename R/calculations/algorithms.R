@@ -7,8 +7,8 @@ getOptimalWeight <- function(data, column, column.true, column.false) {
   temp[!.(1), max := max(get(column)), by=.(group_id, day.campaign)]
 	temp[, weight := get(column.false)]
   temp[get(column) == max, weight := get(column.true)]
-  temp[max == 0, weight := w.equal]
-	temp[.(1), weight := w.equal]
+  temp[max == 0, weight := equal]
+	temp[.(1), weight := equal]
 	return(temp[, weight])
 }
 
@@ -50,7 +50,7 @@ getProbabilityWeights <- function(data, avrg.column) {
 	temp[!.(1), exp := exp(get(avrg.column)/temperature)]
 	temp[!.(1), exp.sum := sum(exp), by=.(group_id, day.campaign)]
   temp[!.(1), weight := w.allocable * exp/exp.sum]
-  temp[.(1), weight := w.equal]
+  temp[.(1), weight := equal]
 	return(temp[, weight])
 }
 
@@ -92,7 +92,7 @@ getUCBWeight <- function(data, avrg.column) {
 	temp[, ci := 0]
 	temp[!.(1), ci := sqrt((2 * ln.spend)/spend.ucb)]
 	temp[!.(1), weight := getWeightWithCI(.SD, avrg.column)]
-	temp[.(1), weight := w.equal]
+	temp[.(1), weight := equal]
 	setkey(temp, day.campaign, id)
 	return (temp[, weight])
 }
@@ -113,7 +113,7 @@ getUCBTunedWeight <- function(data, avrg.column) {
 	temp[, ci := 0]
 	temp[!.(1, 2), ci := getTunedConfidenceInterval(.SD)]
 	temp[!.(1, 2), weight := getWeightWithCI(.SD, avrg.column)]
-	temp[.(1, 2), weight := w.equal]
+	temp[.(1, 2), weight := equal]
 	setkey(temp, day.campaign, id)
 	return (temp[, weight])
 }
@@ -136,7 +136,7 @@ getThompsonWeight <- function(data) {
 	temp[!.(1), best.count := sampleBest(.SD, rep)]
 	temp[!.(1), sum.best.count := sum(best.count), by = .(group_id, day.campaign)]
 	temp[!.(1), weight := best.count / sum.best.count * w.allocable]
-	temp[.(1), weight := w.equal]
+	temp[.(1), weight := equal]
 	setkey(temp, day.campaign, id)
 	return (temp[, weight])
 }
