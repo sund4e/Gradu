@@ -9,24 +9,24 @@ calculateReturns <- function(dataTable) {
 	c1 = 1
 	c10 = 10
 	tau25 = 25
-	tau5 = 5
+	tau50 = 50
 
 	data <- copy(dataTable)
 	data <- getRunningDays(data)
 	calculateInitalColumns(data, budget)
-	calculateReturnsForStaticAlgorithms(data, epsilon01, epsilon05, tau25, tau5)
-	calculateReturnsForDynamicAlgorithms(data, budget, epsilon01, epsilon05, c1, c10, tau25, tau5)
+	calculateOptimalReturn(data)
+	calculateReturnsForDynamicAlgorithms(data, budget, epsilon01, epsilon05, c1, c10, tau25, tau50)
 	return(data)
 }
 
-calculateReturnsForStaticAlgorithms <- function(data, epsilon01, epsilon05, tau25, tau5) {
+calculateOptimalReturn <- function(data) {
 	cat("Calculating optimal returns... ")
 	setkey(data, day.campaign, id)
 	data[, optimal := getGreedyWeight(.SD, 'r')]
 	cat("\u2713\n")
 }
 
-calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilon05, c1, c10, tau25, tau5) {
+calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilon05, c1, c10, tau25, tau50) {
 	weights = c(
 		"greedy",
 		"egreedy.01",
@@ -34,9 +34,9 @@ calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilo
 		"egreedy.decreasing.1", 
 		"egreedy.decreasing.10",
 		"softmax.25",
-		"softmax.5",
+		"softmax.50",
 		"softmix.25",
-		"softmix.5", 
+		"softmix.50", 
 		"ucb",
 		"ucb.tuned",
 		"thompson"
@@ -71,9 +71,9 @@ calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilo
 			egreedy.decreasing.1 = getDecreasingEpsilonGreedyWeight(.SD, c1, "avrg.egreedy.decreasing.1"),
 			egreedy.decreasing.10 = getDecreasingEpsilonGreedyWeight(.SD, c10, "avrg.egreedy.decreasing.10"),
 			softmax.25 = getSoftMaxWeight(.SD, tau25, "avrg.softmax.25"),
-			softmax.5 = getSoftMaxWeight(.SD, tau5, "avrg.softmax.5"),
+			softmax.50 = getSoftMaxWeight(.SD, tau50, "avrg.softmax.50"),
 			softmix.25 = getSoftMixWeight(.SD, tau25, "avrg.softmix.25"),
-			softmix.5 = getSoftMixWeight(.SD, tau5, "avrg.softmix.5"),
+			softmix.50 = getSoftMixWeight(.SD, tau50, "avrg.softmix.50"),
 			ucb = getUCBWeight(.SD, "avrg.ucb"),
 			ucb.tuned = getUCBTunedWeight(.SD, "avrg.ucb.tuned"),
 			thompson = getThompsonWeight(.SD)
