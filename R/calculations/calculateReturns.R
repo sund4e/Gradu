@@ -97,8 +97,8 @@ calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilo
 	cat("(100%) \n")
 
 	# Fix all allocations to equal their proportion of the total allocaion for day
-	data[, (temp) := lapply(.SD, sum), by = .(group_id, day.campaign), .SDcols = weights]
-	data[, (weights) := .SD / data[, temp, with=FALSE], .SDcols = weights]
+	data[, (temps) := lapply(.SD, sum), by = .(group_id, day.campaign), .SDcols = weights]
+	data[, (weights) := .SD / data[, temps, with=FALSE], .SDcols = weights]
 }
  
 calculateInitalColumns <- function(data, budget) {
@@ -118,7 +118,7 @@ calculateInitalColumns <- function(data, budget) {
 
 getRunningDays <- function(data) {
 	cat("Add columns for running days... ")
-	setkey(data, group_id, date, id)
+	setkey(data, group_id, date)
 	days.campaign <- data[, .(date = unique(date)), by = .(group_id)]
 	days.campaign[, day.campaign := 1:.N, by = .(group_id)]
 	setkey(days.campaign, group_id, date)
@@ -127,6 +127,7 @@ getRunningDays <- function(data) {
 	setkey(data, id, date)
 	days.adset <- data[, .(date = date, day.adset = 1:.N), by = .(group_id, id)]
 	setkey(days.adset, group_id, date, id)
+	setkey(data.combined, group_id, date, id)
 	data.combined <- data.combined[days.adset]
 
 	cat("\u2713\n")
