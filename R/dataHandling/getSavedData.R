@@ -17,9 +17,9 @@ crunchData <- function(dataframe) {
 	data <- as.data.table(dataframe) #Create data.table
 
 	#convert data types
-	data[, budget:=as.numeric(budget)]
+	data[, budget:=NULL]
 	data[, bid:=as.numeric(bid)]
-	data[, reach_estimate:=as.numeric(reach_estimate)]
+	data[, reach_estimate:=NULL]
 	data[, spend:=as.numeric(spend)]
 	data[, impressions:=as.numeric(impressions)]
 	data[, clicks:=as.numeric(clicks)]
@@ -30,9 +30,13 @@ crunchData <- function(dataframe) {
 	data <- data[bid > 0] #Filter out rows that have zero/NA in bid
 	setkey(data, group_id, date, spend)
 	data <- unique(data) #Remove duplicate adsets with still unique ids (some random fuckery in db)
-	data[, id:=paste(group_id, adset_id, bid, sep="")] #Create unique ids for adsets having different bids
+	data[, id:=as.character(paste(group_id, adset_id, bid, sep=""))] #Create unique ids for adsets having different bids
+	
+	# Remove all duplicate keys (some of the data is messed up and different ad sets have same ids)
 	setkey(data, id, date)
-	data <- unique(data) # Remove all duplicate keys (some of the data is messed up and different ad sets have same ids)
+	key.data <- unique(data[, c("id", "date"), with = FALSE])
+	data <- data[key.data, mult = "first"]
+
 	data[, days_of_data:=.N, by=id]
 	data <- data[days_of_data >= 30] # Exclude ad sets with less than 30 days of data
 	data[, adsets_in_campaign:=.N, by=.(group_id, date)]
