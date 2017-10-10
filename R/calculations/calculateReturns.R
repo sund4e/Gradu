@@ -8,18 +8,18 @@ calculateReturns <- function(dataTable) {
 	epsilon01 = 0.1
 	c1 = 1
 	c10 = 10
-	tau25 = 25
+	tau1 = 1
 	tau5 = 5
 
 	data <- copy(dataTable)
 	data <- getRunningDays(data)
 	# keep only campaigns with at least 100 days of data
 	data[, total.days := max(day.campaign), by = group_id]
-	data <- data[total.days >= 100]
+	data <- data[total.days >= 100][day.campaign <= 100]
 
 	calculateInitalColumns(data, budget)
 	calculateOptimalReturn(data)
-	calculateReturnsForDynamicAlgorithms(data, budget, epsilon01, epsilon05, c1, c10, tau25, tau5)
+	calculateReturnsForDynamicAlgorithms(data, budget, epsilon01, epsilon05, c1, c10, tau1, tau5)
 	return(data)
 }
 
@@ -30,16 +30,16 @@ calculateOptimalReturn <- function(data) {
 	cat("\u2713\n")
 }
 
-calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilon05, c1, c10, tau25, tau5) {
+calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilon05, c1, c10, tau1, tau5) {
 	weights = c(
 		"greedy",
 		"egreedy.01",
 		"egreedy.05", 
 		"egreedy.decreasing.1", 
 		"egreedy.decreasing.10",
-		"softmax.25",
+		"softmax.1",
 		"softmax.5",
-		"softmix.25",
+		"softmix.1",
 		"softmix.5", 
 		"ucb",
 		"ucb.tuned",
@@ -74,9 +74,9 @@ calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilo
 			egreedy.05 = getEpsilonGreedyWeight(.SD, epsilon05, "avrg.egreedy.05"),
 			egreedy.decreasing.1 = getDecreasingEpsilonGreedyWeight(.SD, c1, "avrg.egreedy.decreasing.1"),
 			egreedy.decreasing.10 = getDecreasingEpsilonGreedyWeight(.SD, c10, "avrg.egreedy.decreasing.10"),
-			softmax.25 = getSoftMaxWeight(.SD, tau25, "avrg.softmax.25"),
+			softmax.1 = getSoftMaxWeight(.SD, tau1, "avrg.softmax.1"),
 			softmax.5 = getSoftMaxWeight(.SD, tau5, "avrg.softmax.5"),
-			softmix.25 = getSoftMixWeight(.SD, tau25, "avrg.softmix.25"),
+			softmix.1 = getSoftMixWeight(.SD, tau1, "avrg.softmix.1"),
 			softmix.5 = getSoftMixWeight(.SD, tau5, "avrg.softmix.5"),
 			ucb = getUCBWeight(.SD, "avrg.ucb"),
 			ucb.tuned = getUCBTunedWeight(.SD, "avrg.ucb.tuned"),
@@ -98,7 +98,7 @@ calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilo
 			cat(".")
 		}
 	}
-	cat("(100%) \n")
+	# cat("(100%) \n")
 
 	# Fix all allocations to equal their proportion of the total allocaion for day
 	data[, (temps) := lapply(.SD, sum), by = .(group_id, day.campaign), .SDcols = weights]

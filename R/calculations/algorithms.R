@@ -48,7 +48,8 @@ getDecreasingEpsilonGreedyWeight <- function(data, constant, avrg.column) {
 getProbabilityWeights <- function(data, avrg.column) {
 	temp <- copy(data)
 	temp[!.(1), exponent := get(avrg.column)/temperature]
-	temp[!.(1), exponent := min(exponent, 709)] # prevent infinite values
+	temp[!.(1), max.exponent := 709]
+	temp[!.(1), exponent := pmin(exponent, max.exponent)] # prevent infinite values
 	temp[!.(1), exp := exp(exponent)]
 	temp[!.(1), exp.sum := sum(exp), by=.(group_id, day.campaign)]
   temp[!.(1), weight := w.allocable * exp/exp.sum]
