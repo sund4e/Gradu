@@ -10,8 +10,8 @@ source("R/dataHandling/getSequentialData.R")
 source("R/calculations/calculateReturns.R")
 
 algorithms = c("equal", "greedy", "egreedy.01", "egreedy.05", 
-	"egreedy.decreasing.1", "egreedy.decreasing.10", "softmax.25", 
-	"softmax.50", "softmix.25", "softmix.50", "ucb", 
+	"egreedy.decreasing.1", "egreedy.decreasing.10", "softmax.1", 
+	"softmax.5", "softmix.1", "softmix.5", "ucb", 
 	"ucb.tuned", "thompson")
 columns = c("optimal", algorithms)
 columnNames = c("r", "regret", "relative")
@@ -33,107 +33,82 @@ runCode <- function() {
 	clicks.weights <- calculateReturns(clicks.sequential)
 	conversions.weights <- calculateReturns(conversions.sequential)
 
-	#Data
-	data.plot <- getCombinedPlotData(impressions.weights, clicks.weights, conversions.weights)
+	#FINAL -----
+	data.campaign <- getCombinedPlotData(impressions.weights, clicks.weights, conversions.weights, "campaign")
+	data.campaign[, goal := as.factor(goal)]
+	levels(data.campaign$goal) <- c("Impressions", "Clicks", "Conversions")
+	ggplot(data.campaign, aes(x = algorithm, y = relative)) + geom_boxplot() + coord_flip() + facet_wrap( ~ goal, ncol=3)
+	data.time <- getCombinedPlotData(impressions.weights, clicks.weights, conversions.weights, "time")
+	ggplot(data.plot, aes(x = day.campaign, y = relative, color = goal)) + geom_line() + facet_wrap( ~ algorithm, ncol=4) + scale_colour_grey()
+	summary <- getCombinedSummary(impressions.weights, clicks.weights, conversions.weights)
+	fwrite(summary, file = "summary_sequential")
+	# ------
 
-
-	impressions.result <- getRegret(impressions.weights)
-	impressions.plot <- getPlotData(impressions.result)
-
-
-	clicks.result <- getRelativeRegret(clicks.weights)
-	conversions.result <- getRelativeRegret(impressions.weights)
-
-	impressions.summary <- getSummaryTable(impressions.result)
-	impressions.plot <- getPlotData(impressions.result)
-	impressions.time <- getTimeData(impressions.result)
-
-	clicks.summary <- getSummaryTable(clicks.result)
-	clicks.plot <- getPlotData(clicks.result)
-	clicks.time <- getTimeData(clicks.result)
-
-	conversions.summary <- getSummaryTable(conversions.result)
-	conversions.plot <- getPlotData(conversions.result)
-	conversions.time <- getTimeData(conversions.result)
-
-	#Plots
-	#Boxplot
-	ggplot(impressions.plot, aes(x = algorithm, y = relative)) + geom_boxplot(outlier.shape = NA) + coord_flip()
-	
-	#Lineplot
-	ggplot(impressions.time, aes(x = day.campaign, y = value, color = algorithm)) + geom_line()
-	ggplot(impressions.time, aes(x = day.campaign, y = cumulative, color = algorithm)) + geom_line() + coord_cartesian(ylim=c(0, 100000))
-	ggplot(impressions.time, aes(x = day.campaign, y = cum.relative, color = algorithm)) + geom_line()
-	ggplot(impressions.time, aes(x = day.campaign, y = cum.relative)) + geom_line() + facet_wrap( ~ algorithm, ncol=4)
-	ggplot(impressions.time[algorithm == "egreedy.01" | algorithm == "thompson"], aes(x = day.campaign, y = relative)) + geom_line() + facet_wrap( ~ algorithm, ncol=4)
-	
-	ggplot(impressions.time, aes(x = day.campaign, y = relative)) + geom_line() + facet_wrap( ~ algorithm, ncol=4)
-
-	#Point plot
-	ggplot(impressions.plot, aes(x = day.campaign, y = regret)) + geom_point() + facet_wrap( ~ algorithm, ncol=3)
-
-	#Histogram
-	ggplot(impressions.plot, aes(x = regret)) + geom_histogram(binwidth = 0.05) + facet_wrap( ~ algorithm, ncol=3) + coord_cartesian(ylim=c(0, 10000), xlim=c(0, 3))
-	ggplot(impressions.plot, aes(x = relative)) + geom_histogram(binwidth = 0.01) + facet_wrap( ~ algorithm, ncol=4)
-
-	#Final plots
+	#Final plots -------------------
 	ggplot(impressions.plot[algorithm == "greedy" | algorithm == "thompson" | algorithm == "egreedy.decreasing.1", lapply(.SD, mean), by = .(day.campaign, algorithm), .SDcols = columnNames], aes(x = day.campaign, y = relative, color = algorithm)) + geom_line() + coord_cartesian(ylim=c(0, 0.25))
 
-	#1. Boxplot showing distribution of relative regrets (or gertets?)
+	#1. Boxplot showing distribution of relative regrets (or regrets?)
 	ggplot(data.plot, aes(x = algorithm, y = relative)) + geom_boxplot(outlier.shape = NA) + coord_flip() + facet_wrap( ~ goal, ncol=3)
+	ggplot(data.plot[, .(relative = mean(relative)), by = .(group_id, algorithm, goal)], aes(x = algorithm, y = relative)) + geom_boxplot(outlier.shape = NA) + coord_flip() + facet_wrap( ~ goal, ncol=3)
+	
+	#Violin plot
+	ggplot(data.plot, aes(x = algorithm, y = relative)) + geom_violin() + coord_flip() + facet_wrap( ~ goal, ncol=3)
 	ggplot(data.plot, aes(x = algorithm, y = relative)) + geom_violin(draw_quantiles = TRUE, scale = "width") + coord_flip() + facet_wrap( ~ goal, ncol=3)
+	ggplot(data.plot[, .(relative = mean(relative)), by = .(group_id, algorithm, goal)], aes(x = algorithm, y = relative)) + geom_violin(draw_quantiles = TRUE, scale = "width") + coord_flip() + facet_wrap( ~ goal, ncol=3)
+
 	#2. Histogram showing the distribution of relative regrets for each algorithm?
 	#3. Timeseries showing correlation of time with the regret
-	ggplot(data.plot[days >= 200 & day.campaign < 200, .(relative = mean(relative)), by = .(day.campaign, algorithm, goal)], aes(x = day.campaign, y = relative, color = goal)) + geom_line() + facet_wrap( ~ algorithm, ncol=4)
+	# ... For non aggregated
+	ggplot(data.plot[, .(relative = mean(relative)), by = .(day.campaign, algorithm, goal)], aes(x = day.campaign, y = relative, color = goal)) + geom_line() + facet_wrap( ~ algorithm, ncol=4)
+	# ... For aggregated on campaign level
+	ggplot(data.plot[, .(relative = mean(relative)), by = .(days, algorithm, goal)], aes(x = days, y = relative, color = goal)) + geom_line() + facet_wrap( ~ algorithm, ncol=4)
+
 	#4. Summary table of regrets
+	summary <- getCombinedSummary(impressions.weights, clicks.weights, conversions.weights)
+
+	#5. Performace by number of adses:
+	ggplot(data.plot[, .(relative = mean(relative)), by = .(adsets, algorithm, goal)], aes(x = adsets, y = relative, color = goal)) + geom_line() + facet_wrap( ~ algorithm, ncol=4)
 }
 
-getCombinedPlotData <- function(impressions.weights, clicks.weights, conversions.weights) {
-	impressions <- getRegret(impressions.weights, "Impressions")
-	clicks <- getRegret(clicks.weights, "Clicks")
-	conversions <- getRegret(conversions.weights, "Conversions")
+getCombinedPlotData <- function(impressions.weights, clicks.weights, conversions.weights, cumulative = "campaign") {
+	impressions <- getRegret(impressions.weights, "Impressions", cumulative)
+	clicks <- getRegret(clicks.weights, "Clicks", cumulative)
+	conversions <- getRegret(conversions.weights, "Conversions", cumulative)
 	combined <- rbindlist(list(impressions, clicks, conversions))
-	plot <- getPlotData(combined, c("group_id", "day.campaign", "goal"))
+	key <- if(cumulative == "time") "day.campaign" else "group_id"
+	plot <- getPlotData(combined, c(key, "goal"))
 	return (plot)
 }
 
-# TODO: Check why campaigns with day 1 are not removed
-# Check why clicks and conversions have NA rows 
-# data.plot[is.na(relative)][day.campaign != 1][goal != "Conversions"]
-getRegret <- function(data.weights, goal = "Impressions") {
+getRegret <- function(data.weights, goal = "Impressions", cumulative = "campaign") {
 	data <- copy(data.weights)
-	data[, (returns) := .SD * data[, r], .SDcols = columns]
 	adsets <- data[, .(adsets = .N), keyby = .(group_id, day.campaign)]
+
+	data[, (returns) := .SD * data[, r], .SDcols = columns]
 	data <- data[, lapply(.SD, sum, na.rm = TRUE), keyby = .(group_id, day.campaign), .SDcols = returns]
-	data <- data[r.optimal > 0][day.campaign > 1] #Remove reduntant rows
+	data <- data[r.optimal > 0][day.campaign > 1][day.campaign <= 100] #Remove reduntant rows [day.campaign <= 100]
 	data[, (regrets) := data[, r.optimal] - .SD, .SDcols = returns[-1]]	
 	#Fix negative regrets (due to rounding in alloction) to zero
 	data[, (regrets) := lapply(.SD, function(regret) lapply(regret, max, 0)), .SDcols = regrets]
 	data[, (regrets) := lapply(.SD, as.numeric), .SDcols = regrets]
+
+	if (cumulative == "campaign") {
+		data <- data[, lapply(.SD, sum), by = group_id]
+		adsets <- adsets[, .(adsets = mean(adsets)), keyby = .(group_id)]
+	}
+
+	if (cumulative == "time") {
+		data <- data[, lapply(.SD, sum), keyby = day.campaign, .SDcols = -c("group_id")]
+		adsets <- adsets[, .(adsets = mean(adsets)), keyby = day.campaign]
+	}
+
 	data[, (relative) := .SD / data[, r.optimal], .SDcols = regrets]
-	
-	data[, days := max(day.campaign), by = group_id]
-	data <- data[adsets]
+	data <- adsets[data]
 	data[, goal := goal]
 	return(data)
 }
 
-getAggregatedByCampaign <- function(data) {
-	sums = paste('sum', algorithms, sep=".")
-
-	sum.regrets <- data[, lapply(.SD, sum, na.rm = TRUE), keyby=group_id, .SDcols = regrets]
-	setnames(sum.regrets, old = regrets, new = sums)
-	sum.optimal <- data[, .(sum.optimal = sum(r.optimal)), keyby=group_id]
-	avrg.regrets <- data[, lapply(.SD, mean, na.rm = TRUE), keyby=group_id, .SDcols = regrets]
-	avrg.returns <- data[, lapply(.SD, mean, na.rm = TRUE), keyby=group_id, .SDcols = returns]
-
-	data.combined = avrg.returns[avrg.regrets][sum.regrets][sum.optimal]
-	data.combined[, (relative) := .SD / data.combined[, sum.optimal], .SDcols = sums]
-
-	return (data.combined)
-}
-
-getPlotData <- function(data, keys = c("group_id", "day.campaign")) {
+getPlotData <- function(data, keys = c("group_id", "goal")) {
 	r = returns[-1]
 	measures = list(r, regrets, relative)
 	data.plot = melt(
@@ -146,46 +121,19 @@ getPlotData <- function(data, keys = c("group_id", "day.campaign")) {
 	data.plot[, algorithm := algorithms[algorithm]]
 
 	setkeyv(data.plot, keys)
-	temp <- data[, .(days, adsets), keyby = keys]
+	temp <- data[, .(adsets), keyby = keys]
 	data.plot <- data.plot[temp]
 
 	return (data.plot)
 }
 
-getTimeData <- function(data, correctSoftMix = FALSE) {
-	if(correctSoftMix) {
-		data <- removeNAs(data)
-	}
-	data.day <- data[, lapply(.SD, sum), by=day.campaign, .SDcols = -c("group_id")]
-
-	algorithms = c("equal", "greedy", "egreedy.01", "egreedy.05", 
-	"egreedy.decreasing.1", "egreedy.decreasing.10", "softmax.25", 
-	"softmax.5", "softmix.25", "softmix.5", "ucb", 
-	"ucb.tuned", "thompson")
-	id.columns = c("day.campaign")
-	columns = c('r', 'regret', 'relative')
-	columns.cumulative = paste('cum', columns, sep=".")
-	r = paste('r', algorithms, sep=".")
-	regret = paste('regret', algorithms, sep=".")
-	relative = paste('relative', algorithms, sep=".")
-	measures = list(r, regret, relative)
-
-	data.plot = melt(
-		data.day, 
-		id.vars = id.columns, 
-		measure.vars = measures, 
-		variable.name = "algorithm", 
-		value.name = columns
-	)
-	data.plot[, (columns.cumulative) := lapply(.SD, cumsum), by=algorithm, .SDcols = columns]
-	data.plot[, algorithm := algorithms[algorithm]]
-	return (data.plot)
-}
-
-combineResults <- function(impressions.result, clicks.result, conversions.result) {
-	impressions <- getSummaryTable(impressions.result)
-	clicks <- getSummaryTable(clicks.result)
-	conversions <- getSummaryTable(conversions.result)
+getCombinedSummary <- function(impressions.weights, clicks.weights, conversions.weights) {
+	impressions <- getRegret(impressions.weights, "Impressions")
+	clicks <- getRegret(clicks.weights, "Clicks")
+	conversions <- getRegret(conversions.weights, "Conversions")
+	impressions <- getSummaryTable(impressions)
+	clicks <- getSummaryTable(clicks)
+	conversions <- getSummaryTable(conversions)
 	combined <- impressions[clicks][conversions]
 }
 
@@ -200,9 +148,7 @@ getSummaryTable <- function(data) {
 }
 
 getAggregate <- function(data, fun, metric.name) {
-	aggregated.campaign <- data[, lapply(.SD, fun, na.rm = TRUE), by = .(group_id)]
-	aggregated <- aggregated.campaign[, lapply(.SD, fun, na.rm = TRUE), .SDcols = -c("group_id")]
-	# aggregated <- data[, lapply(.SD, fun, na.rm = TRUE), .SDcols = -c("group_id")]
+	aggregated <- data[, lapply(.SD, fun, na.rm = TRUE), .SDcols = -c("group_id", "goal")]
 	aggregated[, metric := metric.name]
 	return(aggregated)
 }
@@ -242,4 +188,8 @@ getRelevantColumns <- function(data.transposed) {
 parseAlgorithm <- function(data) {
 	data[, Algorithm := gsub("^\\w+\\.", "", Algorithm)]
 	setkey(data, Algorithm)
+}
+
+getInitialSummary <- function(impressions.sequential, clicks.sequential, conversions.sequential) {
+	
 }
