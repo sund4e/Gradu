@@ -9,13 +9,17 @@ calculateReturns <- function(dataTable) {
 	c1 = 1
 	c10 = 10
 	tau25 = 25
-	tau50 = 50
+	tau5 = 5
 
 	data <- copy(dataTable)
 	data <- getRunningDays(data)
+	# keep only campaigns with at least 100 days of data
+	data[, total.days := max(day.campaign), by = group_id]
+	data <- data[total.days >= 100]
+
 	calculateInitalColumns(data, budget)
 	calculateOptimalReturn(data)
-	calculateReturnsForDynamicAlgorithms(data, budget, epsilon01, epsilon05, c1, c10, tau25, tau50)
+	calculateReturnsForDynamicAlgorithms(data, budget, epsilon01, epsilon05, c1, c10, tau25, tau5)
 	return(data)
 }
 
@@ -26,7 +30,7 @@ calculateOptimalReturn <- function(data) {
 	cat("\u2713\n")
 }
 
-calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilon05, c1, c10, tau25, tau50) {
+calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilon05, c1, c10, tau25, tau5) {
 	weights = c(
 		"greedy",
 		"egreedy.01",
@@ -34,9 +38,9 @@ calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilo
 		"egreedy.decreasing.1", 
 		"egreedy.decreasing.10",
 		"softmax.25",
-		"softmax.50",
+		"softmax.5",
 		"softmix.25",
-		"softmix.50", 
+		"softmix.5", 
 		"ucb",
 		"ucb.tuned",
 		"thompson"
@@ -55,7 +59,7 @@ calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilo
 
 	cat("Calculating returns for algorithms... \n")
 	setkey(data, day.campaign, id)
-	days <- max(data$day.campaign)
+	days <- 100 # days <- max(data$day.campaign)
 	for(i in 1:days) {
 		data[, (temps) := lapply(.SD, sum), by = .(id), .SDcols = returns]
 		data[, (tempcounts) := lapply(.SD, sum), by = .(id), .SDcols = counts]
@@ -71,9 +75,9 @@ calculateReturnsForDynamicAlgorithms <- function(data, budget, epsilon01, epsilo
 			egreedy.decreasing.1 = getDecreasingEpsilonGreedyWeight(.SD, c1, "avrg.egreedy.decreasing.1"),
 			egreedy.decreasing.10 = getDecreasingEpsilonGreedyWeight(.SD, c10, "avrg.egreedy.decreasing.10"),
 			softmax.25 = getSoftMaxWeight(.SD, tau25, "avrg.softmax.25"),
-			softmax.50 = getSoftMaxWeight(.SD, tau50, "avrg.softmax.50"),
+			softmax.5 = getSoftMaxWeight(.SD, tau5, "avrg.softmax.5"),
 			softmix.25 = getSoftMixWeight(.SD, tau25, "avrg.softmix.25"),
-			softmix.50 = getSoftMixWeight(.SD, tau50, "avrg.softmix.50"),
+			softmix.5 = getSoftMixWeight(.SD, tau5, "avrg.softmix.5"),
 			ucb = getUCBWeight(.SD, "avrg.ucb"),
 			ucb.tuned = getUCBTunedWeight(.SD, "avrg.ucb.tuned"),
 			thompson = getThompsonWeight(.SD)
