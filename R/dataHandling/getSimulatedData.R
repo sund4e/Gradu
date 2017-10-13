@@ -2,7 +2,7 @@ require(data.table)
 
 getSimulatedData <- function (data, conversion_column) {
   data.distributions <- getRewardDistributions(data)
-  data.samples <- generateSamples(data, conversion_column)
+  data.samples <- generateSamples(data.distributions, conversion_column)
   return (data.samples)
 }
 
