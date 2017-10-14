@@ -20,6 +20,12 @@ returns = c("r.optimal", paste('r', algorithms, sep="."))
 regrets = paste('regret', algorithms, sep=".")
 relative = paste('relative', algorithms, sep=".")
 
+labels = c("Equal", "Greedy", "Epsilon-greedy 0.1", "Epsilon-greedy 0.5", 
+	"Decreasing epsilon-greedy 1", "Decreasing epsilon-greedy 10", "Softmax 1", "Softmax 5", 
+	"Softmix 1", "Softmix 5", "UCB", "UCB tuned", "Thompson")
+linetypes = c(seq_len(13))
+colors = c(rep("black", 6), rep("gray", 4), rep("gray40", 3))
+
 #Run code -----------------------
 runCode <- function() {
 	data <- getSavedData()
@@ -42,18 +48,12 @@ runCode <- function() {
 	save(sim.clicks, file = "simulated_clicks")
 	save(sim.conversions, file = "simulated_conversions")
 	sim.campaign <- getCombinedPlotData(sim.impressions, sim.clicks, sim.conversions, "campaign")
+	sim.campaign <- setFactors(sim.campaign)
 	ggplot(sim.campaign, aes(x = algorithm, y = relative)) + geom_boxplot() + coord_flip() + facet_wrap( ~ goal, ncol=3) + labs(x="" ,y="Regret relative to optimal allocation")
 	summary <- getCombinedSummary(sim.impressions, sim.clicks, sim.conversions)
 	fwrite(summary, file = "summary_simulation")
 
 	#FINAL -----
-	labels = c("Equal", "Greedy", "Epsilon-greedy 0.1", "Epsilon-greedy 0.5" 
-	"Decreasing epsilon-greedy 1", "Decreasing epsilon-greedy 10", "Softmax 1", 
-	"Softmax 5", "Softmix 1", "Softmix 5", "UCB", 
-	"UCB tuned", "Thompson")
-	linetypes = c(seq_len(13))
-	colors = c("black", "gray30", "gray50",rep("gray", 10))
-
 	#Plot the optimal returns:
 	data.campaign <- getCombinedPlotData(impressions.weights, clicks.weights, conversions.weights, "campaign")
 	ggplot(data.campaign, aes(x = r.optimal, linetype = goal)) + scale_x_log10(labels = scales::comma) + geom_density() + labs(y="Density" ,x="Reward per unit of budget", linetype = "Goal")
@@ -63,7 +63,8 @@ runCode <- function() {
 	fwrite(summary, file = "summary_sequential")
 	#Plot regrets in boxplot:
 	data.campaign <- getCombinedPlotData(impressions.weights, clicks.weights, conversions.weights, "campaign")
-	ggplot(data.campaign, aes(x = algorithm, y = relative)) + geom_boxplot() + coord_flip() + facet_wrap( ~ goal, ncol=3) + labs(x="" ,y="Regret relative to optimal allocation")
+	data.campaign <- setFactors(data.campaign)
+	ggplot(data.campaign, aes(x = algorithm, y = relative)) + geom_boxplot() + coord_flip() + facet_wrap( ~ goal, ncol=3) + labs(x="" ,y="Regret relative to optimal allocation")  + scale_x_discrete(labels = labels)
 	#...with average:
 	ggplot(data.campaign, aes(x = algorithm, y = relative)) + geom_boxplot() + coord_flip() + facet_wrap( ~ goal, ncol=3) + stat_summary(fun.y=mean, colour="darkred", geom="point", shape=18, size=3)
 
@@ -76,10 +77,12 @@ runCode <- function() {
 	data.time <- getCombinedPlotData(impressions.weights, clicks.weights, conversions.weights, FALSE)
 	data.time$algorithm <- factor(data.time$algorithm, levels = unique(data.time$algorithm))
 	data.time[, r.cumulative := cumsum(r * 100), by = .(group_id, day.campaign, algorithm)]
-	ggplot(data.time, aes(x = r.cumulative, y = relative, linetype = algorithm)) + geom_smooth(method = "glm", se = FALSE, colour="black", size=0.5) + scale_colour_grey() + scale_x_log10(labels = scales::comma) + scale_y_continuous(limits = c(0, NA)) + labs(x="Cumulative returns", y="Regret relative to optimal allocation", linetype = "Goal")
+	ggplot(data.time, aes(x = r.cumulative, y = relative, linetype = algorithm, color= algorithm)) + geom_smooth(se = FALSE, size=0.5) + scale_x_log10(labels = scales::comma) + scale_y_continuous(limits = c(0, NA)) + labs(x="Cumulative returns", y="Regret relative to optimal allocation", linetype = "Goal", color = "Goal") + scale_linetype_manual(values = linetypes, labels = labels) + scale_colour_manual(values = colors, labels = labels)
 
 	#Plot regret for using different reward than the one given for the algorithms 
-	test <- getReturnForDifferentGoals(impressions.weights, conversions.weights, clicks.sequential, conversions.sequential)
+	data.goals <- getReturnForDifferentGoals(impressions.weights, clicks.weights, conversions.weights)
+	data.goals <- setFactors(data.goals, c("Using impressions as proxy for clicks", "Using impressions as proxy for conversions", "Using clicks as proxy for conversions"))
+	ggplot(data.goals, aes(x = algorithm, y = relative)) + geom_boxplot() + coord_flip() + facet_wrap( ~ goal, ncol=3) + labs(x="" ,y="Performance improvement in relative regret")  + scale_x_discrete(labels = labels)
 	ggplot(test, aes(x = algorithm, y = relative)) + geom_boxplot() + coord_flip() + facet_wrap( ~ goal, ncol=3)
 
 	#Nice to have
@@ -88,6 +91,17 @@ runCode <- function() {
 	#Correlation if regret and numer of ad sets:
 	ggplot(data.campaign, aes(x = adsets, y = relative, color = goal)) + facet_wrap( ~ algorithm, ncol=4)+ geom_smooth()
 	# ------
+}
+
+setFactors <- function (dataTable, facets = c("Impressions", "Clicks", "Conversions")) {
+	data <- copy(dataTable)
+	data$algorithm <- factor(data$algorithm, levels = unique(data$algorithm))
+	data[goal == facets[1], order := 1]
+	data[goal == facets[2], order := 2]
+	data[goal == facets[3], order := 3]
+	data <- data[order(order)]
+	data$goal <- factor(data$goal, levels = unique(data$goal))
+	return(data)
 }
 
 getReturnForDifferentGoals <- function (impressions.weights, clicks.weights, conversions.weights) {
@@ -111,8 +125,20 @@ getReturnForDifferentGoals <- function (impressions.weights, clicks.weights, con
 		optimal = conversions.weights[, optimal],
 		r = conversions.weights[, r]
 	)]
-	data <- getCombinedPlotData(impressions.clicks, impressions.conversions, clicks.conversions, "campaign")
-	return (data)
+
+	cumulative = "campaign"
+	clicks <- getRegret(clicks, "Clicks to clicks", cumulative)
+	impressions.clicks <- getRegret(impressions.clicks, "Using impressions as proxy for clicks", cumulative)
+	conversions <- getRegret(conversions, "Conversions.conversions", cumulative)
+	clicks.conversions <- getRegret(clicks.conversions, "Using clicks as proxy for conversions", cumulative)
+	impressions.conversions <- getRegret(impressions.conversions, "Using impressions as proxy for conversions", cumulative)
+
+	impressions.clicks[, (relative) := clicks[, relative, with=FALSE] - .SD, .SDcols = relative]
+	impressions.conversions[, (relative) := conversions[, relative, with=FALSE] - .SD, .SDcols = relative]
+	clicks.conversions[, (relative) := conversions[, relative, with=FALSE] - .SD, .SDcols = relative]
+	combined <- rbindlist(list(impressions.clicks, impressions.conversions, clicks.conversions))
+	plot <- getPlotData(combined, c("group_id", "goal"))
+	return (plot)
 }
 
 getCombinedPlotData <- function(impressions.weights, clicks.weights, conversions.weights, cumulative = "campaign") {
