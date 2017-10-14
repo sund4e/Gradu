@@ -29,9 +29,6 @@ runCode <- function() {
 	clicks.sequential <- getSequentialData(data, "clicks_cr")
 	conversions.sequential <- getSequentialData(data, "conversions_cr")
 
-	#Summary
-
-
 	#Get allocations
 	impressions.weights <- calculateReturns(impressions.sequential)
 	clicks.weights <- calculateReturns(clicks.sequential)
@@ -45,22 +42,45 @@ runCode <- function() {
 	save(sim.clicks, file = "simulated_clicks")
 	save(sim.conversions, file = "simulated_conversions")
 	sim.campaign <- getCombinedPlotData(sim.impressions, sim.clicks, sim.conversions, "campaign")
-
-	summary <- getCombinedSummary(impressions.weights, clicks.weights, conversions.weights)
+	ggplot(sim.campaign, aes(x = algorithm, y = relative)) + geom_boxplot() + coord_flip() + facet_wrap( ~ goal, ncol=3) + labs(x="" ,y="Regret relative to optimal allocation")
+	summary <- getCombinedSummary(sim.impressions, sim.clicks, sim.conversions)
+	fwrite(summary, file = "summary_simulation")
 
 	#FINAL -----
+	labels = c("Equal", "Greedy", "Epsilon-greedy 0.1", "Epsilon-greedy 0.5" 
+	"Decreasing epsilon-greedy 1", "Decreasing epsilon-greedy 10", "Softmax 1", 
+	"Softmax 5", "Softmix 1", "Softmix 5", "UCB", 
+	"UCB tuned", "Thompson")
+	linetypes = c(seq_len(13))
+	colors = c("black", "gray30", "gray50",rep("gray", 10))
+
 	#Plot the optimal returns:
-	ggplot(data.campaign, aes(x = r.optimal, linetype = goal)) + scale_x_log10() + geom_density()
+	data.campaign <- getCombinedPlotData(impressions.weights, clicks.weights, conversions.weights, "campaign")
+	ggplot(data.campaign, aes(x = r.optimal, linetype = goal)) + scale_x_log10(labels = scales::comma) + geom_density() + labs(y="Density" ,x="Reward per unit of budget", linetype = "Goal")
+	data.campaign[, .(Avrg = mean(r.optimal), SD = sd(r.optimal)), by=goal]
+	#Summary table:
+	summary <- getCombinedSummary(impressions.weights, clicks.weights, conversions.weights)
+	fwrite(summary, file = "summary_sequential")
 	#Plot regrets in boxplot:
 	data.campaign <- getCombinedPlotData(impressions.weights, clicks.weights, conversions.weights, "campaign")
-	levels(data.campaign$goal) <- c("Impressions", "Clicks", "Conversions")
-	ggplot(data.campaign, aes(x = algorithm, y = relative)) + geom_boxplot() + coord_flip() + facet_wrap( ~ goal, ncol=3)
-	#Plot
+	ggplot(data.campaign, aes(x = algorithm, y = relative)) + geom_boxplot() + coord_flip() + facet_wrap( ~ goal, ncol=3) + labs(x="" ,y="Regret relative to optimal allocation")
+	#...with average:
+	ggplot(data.campaign, aes(x = algorithm, y = relative)) + geom_boxplot() + coord_flip() + facet_wrap( ~ goal, ncol=3) + stat_summary(fun.y=mean, colour="darkred", geom="point", shape=18, size=3)
+
+	#Timeseries
 	data.time <- getCombinedPlotData(impressions.weights, clicks.weights, conversions.weights, FALSE)
 	ggplot(data.time, aes(x = day.campaign, y = relative, color = goal)) + geom_smooth() + facet_wrap( ~ algorithm, ncol=4) + scale_colour_grey()
 	ggplot(data.time, aes(x = day.campaign, y = relative, color = goal)) + geom_line() + facet_wrap( ~ algorithm, ncol=4) + scale_colour_grey()
-	summary <- getCombinedSummary(impressions.weights, clicks.weights, conversions.weights)
-	fwrite(summary, file = "summary_sequential")
+
+	#Cumulative returns vs. predictability
+	data.time <- getCombinedPlotData(impressions.weights, clicks.weights, conversions.weights, FALSE)
+	data.time$algorithm <- factor(data.time$algorithm, levels = unique(data.time$algorithm))
+	data.time[, r.cumulative := cumsum(r * 100), by = .(group_id, day.campaign, algorithm)]
+	ggplot(data.time, aes(x = r.cumulative, y = relative, linetype = algorithm)) + geom_smooth(method = "glm", se = FALSE, colour="black", size=0.5) + scale_colour_grey() + scale_x_log10(labels = scales::comma) + scale_y_continuous(limits = c(0, NA)) + labs(x="Cumulative returns", y="Regret relative to optimal allocation", linetype = "Goal")
+
+	#Plot regret for using different reward than the one given for the algorithms 
+	test <- getReturnForDifferentGoals(impressions.weights, conversions.weights, clicks.sequential, conversions.sequential)
+	ggplot(test, aes(x = algorithm, y = relative)) + geom_boxplot() + coord_flip() + facet_wrap( ~ goal, ncol=3)
 
 	#Nice to have
 	#Correlation of regret and standard deviation:
@@ -68,6 +88,31 @@ runCode <- function() {
 	#Correlation if regret and numer of ad sets:
 	ggplot(data.campaign, aes(x = adsets, y = relative, color = goal)) + facet_wrap( ~ algorithm, ncol=4)+ geom_smooth()
 	# ------
+}
+
+getReturnForDifferentGoals <- function (impressions.weights, clicks.weights, conversions.weights) {
+	impressions <- copy(impressions.weights)
+	clicks <- copy(clicks.weights)
+	conversions <- copy(conversions.weights)
+	keys = c("date", "group_id", "id")
+	setkeyv(impressions, keys)
+	setkeyv(clicks, keys)
+	setkeyv(conversions, keys)
+
+	impressions.clicks <- impressions[, `:=` (
+		optimal = clicks.weights[, optimal],
+		r = clicks.weights[, r]
+	)]
+	impressions.conversions <- impressions[, `:=` (
+		optimal = conversions.weights[, optimal],
+		r = conversions.weights[, r]
+	)]
+	clicks.conversions <- clicks[, `:=` (
+		optimal = conversions.weights[, optimal],
+		r = conversions.weights[, r]
+	)]
+	data <- getCombinedPlotData(impressions.clicks, impressions.conversions, clicks.conversions, "campaign")
+	return (data)
 }
 
 getCombinedPlotData <- function(impressions.weights, clicks.weights, conversions.weights, cumulative = "campaign") {
@@ -91,7 +136,7 @@ getRegret <- function(data.weights, goal = "Impressions", cumulative = "campaign
 
 	data[, (returns) := .SD * data[, r], .SDcols = columns]
 	data <- data[, lapply(.SD, sum, na.rm = TRUE), keyby = .(group_id, day.campaign), .SDcols = returns]
-	data <- data[r.optimal > 0][day.campaign > 1][day.campaign <= 100] #Remove reduntant rows [day.campaign <= 100]
+	data <- data[day.campaign > 1] #Remove reduntant rows [r.optimal > 0][day.campaign <= 100]
 	data[, (regrets) := data[, r.optimal] - .SD, .SDcols = returns[-1]]	
 	#Fix negative regrets (due to rounding in alloction) to zero
 	data[, (regrets) := lapply(.SD, function(regret) lapply(regret, max, 0)), .SDcols = regrets]
